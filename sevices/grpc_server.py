@@ -44,7 +44,7 @@ class PriceServer(market_pb2_grpc.PriceServiceServicer):
         )
 
     def getSymbols(self, request, context)-> market_pb2.SymbolResponse:
-        exchange_id = request.exchange_id
+        exchange_id = int(request.get("exchange_id", 0))
         symbol_return_list: List[market_pb2.Symbol] = []
         exchange_symbol_list = ExchangeSymbolShip.objects.filter(
             exchange=Exchange.objects.filter(id=exchange_id).first()
@@ -64,26 +64,28 @@ class PriceServer(market_pb2_grpc.PriceServiceServicer):
         )
 
     def getSymbolPrices(self, request, context)-> market_pb2.SymbolPriceResponse:
-        exchange_id = request.exchange_id
-        symbol_id = request.symbol_id
+        exchange_id = int(request.get("exchange_id", 0))
+        symbol_id = int(request.get("symbol_id", 0))
         symbol_price_data: List[market_pb2.SymbolPrice] = []
-        symbol = Symbol.objects.filter(id=symbol_id).order_by("-id").first()
-        exchange  = Exchange.objects.filter(id=exchange_id).order_by("-id").first()
-        if exchange and symbol is None:
+        if exchange_id == 0 and symbol_id == 0:
             symbol_price_list = MgObPersistence.objects.filter(
                 status='Active'
             ).order_by("-id")
-        elif exchange is not None and symbol is None:
+        elif exchange_id != 0 and symbol_id == 0:
+            exchange = Exchange.objects.filter(id=exchange_id).order_by("-id").first()
             symbol_price_list = MgObPersistence.objects.filter(
                 exchange=exchange,
                 status='Active'
             ).order_by("-id")
-        elif  exchange is None and symbol is not None:
+        elif  exchange_id == 0 and symbol_id != 0:
+            symbol = Symbol.objects.filter(id=symbol_id).order_by("-id").first()
             symbol_price_list = MgObPersistence.objects.filter(
                 symbol=symbol,
                 status='Active'
             ).order_by("-id")
         else:
+            exchange = Exchange.objects.filter(id=exchange_id).order_by("-id").first()
+            symbol = Symbol.objects.filter(id=symbol_id).order_by("-id").first()
             symbol_price_list = MgObPersistence.objects.filter(
                 exchange=exchange,
                 symbol=symbol,
@@ -125,12 +127,12 @@ class PriceServer(market_pb2_grpc.PriceServiceServicer):
         )
 
     def getStableCoinPrice(self, request, context)-> market_pb2.StableCoinPriceResponse:
-        coin_id = request.coin_id
+        coin_id = int(request.get("coin_id", 0))
         stablecoin_price_list: List[market_pb2.StableCoin] = []
-        db_asset = Asset.objects.filter(id=coin_id).first()
-        if db_asset is None:
+        if coin_id == 0:
             stable_coin_prices = MgObPersistence.objects.all().order_by("-id")
         else:
+            db_asset = Asset.objects.filter(id=coin_id).first()
             stable_coin_prices = MgObPersistence.objects.filter(
                 qoute_asset=db_asset
             ).order_by("-id")
