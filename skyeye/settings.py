@@ -52,18 +52,13 @@ TEMPLATES = [
 WSGI_APPLICATION = 'skyeye.wsgi.application'
 
 DATABASES = {
-    'default': {
-         #'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'skyeye',
-        'USER': 'root',
-        'PASSWORD': 'Wenwo2020!',
-        'HOST': 'localhost',
-        'PORT': '3306',
-        'OPTIONS': {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-        },
-    }
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "skeye",
+        "USER": "guoshijiang",
+        "PASSWORD": "",
+        "HOST": "127.0.0.1",
+    },
 }
 
 TRADING_REDIS = {
