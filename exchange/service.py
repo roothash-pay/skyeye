@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import socket
 import sys
 import time
-from typing import Iterable, Optional, Set
+from typing import Iterable, Optional, Set, List
 
 from django.conf import settings
 
@@ -16,8 +17,6 @@ from exchange.controllers import merge_orderbooks, set_24ticker, set_orderbook
 from exchange.models import Exchange, Symbol
 from exchange.types import Orderbook
 
-
-import socket
 HOSTNAME = socket.gethostname()
 
 
@@ -34,16 +33,16 @@ class CrawlerService(object):
         else:
             self.exchange = None
         self.logger = getLogger('crawler.service.{}'.format(self.exchange_name))
-        self.symbols: Iterable[Symbol] = []
+        self.symbols: List[Symbol] = []
         self.symbol_names: Set[str] = set()
         self.exchange_client = ccxt_client.get_async_client(exchange_name)
 
     def init_symbols_of_exchange(self):
         if self.exchange_name == 'platform':
-            self.symbols = Symbol.objects.filter(status='ACTIVE', name__in=settings.MERGE_SYMBOL_CONFIG.keys())
+            self.symbols = Symbol.objects.filter(status='Active', name__in=settings.MERGE_SYMBOL_CONFIG.keys())
         else:
-            self.symbols = self.exchange.symbols.filter(status='ACTIVE')
-        self.symbol_names = [sym.name for sym in self.symbols]
+            self.symbols = self.exchange.symbols.filter(status='Active')
+        self.symbol_names = set([sym.name for sym in self.symbols])
 
     def run(self, action_func):
         self.init_symbols_of_exchange()
@@ -53,11 +52,18 @@ class CrawlerService(object):
 
     @retry_on()
     async def fetch_24ticker(self, symbol: Symbol) -> None:
+        self.logger.debug(f"Attempting fetch_24ticker for {symbol.name}")
         assert self.exchange_client is not None, f'{self} attribute exchange_client is None'
         ccxt_client.select_proxy(self.exchange_client)
-        ticker = await self.exchange_client.fetch_ticker(symbol.name)
-        ticker["timestamp"] = time.time()
-        set_24ticker(self.exchange_name, symbol.name, ticker)
+        try:
+            ticker = await self.exchange_client.fetch_ticker(symbol.name)
+            self.logger.debug(f"API call successful for {symbol.name}. Ticker data: {ticker}")
+            ticker["timestamp"] = time.time() * 1000
+            set_24ticker(self.exchange_name, symbol.name, ticker)
+            self.logger.debug(f"set_24ticker completed for {symbol.name}")
+        except Exception as e:
+            self.logger.error(f"Error during fetch_ticker API call or processing for {symbol.name}", exc_info=True)
+            raise
 
     @retry_on()
     async def fetch_orderbook(self, symbol: Symbol, limit: int) -> None:
@@ -67,15 +73,11 @@ class CrawlerService(object):
         ccxt_client.select_proxy(self.exchange_client)
         if symbol.name in ['BTC-USD', 'ETH-USD']:
             params = {'market_type': 'swap'}
-            data = await self.exchange_client.fetch_order_book(
-                symbol.name, params=params)
+            data = await self.exchange_client.fetch_order_book(symbol.name, params=params)
         else:
             slimit = search_limit(limit)
             assert slimit >= limit, f'slimit {slimit} must be greater than limit {limit}'
-            data = await self.exchange_client.fetch_order_book(
-                symbol.name,
-                limit=slimit
-            )
+            data = await self.exchange_client.fetch_order_book(symbol.name, limit=slimit)
         ob = Orderbook.from_json(data)
         ob.bids = ob.bids[:limit]
         ob.asks = ob.asks[:limit]
@@ -100,15 +102,24 @@ class CrawlerService(object):
             await asyncio.sleep(SLEEP_CONFIG['crawler_fetch_markets'])
 
     async def crawler_fetch_24tickers(self):
+        self.logger.info(f"Starting crawler_fetch_24tickers loop for exchange {self.exchange_name}")
+        if not self.symbols:
+            self.logger.warning("Symbols list is empty, crawler loop will not run.")
+            return  # Exit if no symbols
         while True:
+            self.logger.debug(f"Starting new ticker fetch cycle for symbols: {self.symbol_names}")
             for symbol in self.symbols:
+                self.logger.debug(f"Processing symbol: {symbol.name}")
                 try:
                     await self.fetch_24ticker(symbol)
-                    self.logger.debug('Crawler %s %s fetch 24tickers success' % (self.exchange_name, symbol.name))
                 except Exception as e:
-                    self.logger.error('Crawler %s %s fetch 24tickers fail.' % (self.exchange_name, symbol.name),
-                                      exc_info=True)
-            sleep_time = SLEEP_CONFIG['crawler_fetch_24tickers']
+                    self.logger.error(f'Error processing symbol {symbol.name} in main loop.', exc_info=True)
+            try:
+                sleep_time = SLEEP_CONFIG['crawler_fetch_24tickers']
+            except KeyError:
+                self.logger.warning("'crawler_fetch_24tickers' not found in SLEEP_CONFIG, using default 60s")
+                sleep_time = 60  # Default sleep time
+            self.logger.debug(f"Ticker fetch cycle complete. Sleeping for {sleep_time} seconds.")
             await asyncio.sleep(sleep_time)
 
     async def crawler_fetch_orderbooks(self, limit: int = 15):
@@ -142,7 +153,7 @@ class CrawlerService(object):
                 sys.exit(1)
 
     async def merge_orderbooks(self, symbol):
-        merge_orderbooks(symbol)
+        await merge_orderbooks(symbol)
 
     async def crawler_merge_orderbooks(self):
         while True:

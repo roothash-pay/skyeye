@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os
-import base64
 import functools
 import hashlib
-import hmac
+import json
 import logging
+import os
 import sys
 import time
+import uuid
 from bisect import bisect
-
 from datetime import datetime, timezone, timedelta
-from decimal import ROUND_FLOOR, ROUND_UP
 from decimal import Context as DecimalContext
 from decimal import Decimal, InvalidOperation
+from decimal import ROUND_FLOOR, ROUND_UP
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import quote_plus, urlencode
+from urllib.parse import urlencode
 
 import json_log_formatter
 import pytz
@@ -27,26 +26,25 @@ from django.utils.timezone import localtime, now
 
 from common.paginator import MyPaginator
 
-import json
-import uuid
 
-def call_people(alarmName,alarmContent):
+def call_people(alarmName, alarmContent):
     logger = logging.getLogger('call_people')
     try:
-        logger.error('发起电话报警：'+alarmContent)
-        data={
-            'app':'a711c9b7-cb52-401a-a18c-ef9632ddec9f',
-            'eventType':'trigger',
-            'eventId':uuid.uuid4().hex,
-            'alarmName':alarmName,
-            'alarmContent':alarmContent,
-            'priority':3
+        logger.error('发起电话报警：' + alarmContent)
+        data = {
+            'app': 'a711c9b7-cb52-401a-a18c-ef9632ddec9f',
+            'eventType': 'trigger',
+            'eventId': uuid.uuid4().hex,
+            'alarmName': alarmName,
+            'alarmContent': alarmContent,
+            'priority': 3
         }
-        r=requests.post('http://api.aiops.com/alert/api/event',data=json.dumps(data))
+        r = requests.post('http://api.aiops.com/alert/api/event', data=json.dumps(data))
         if not '"result":"success"' in r.text:
             raise RuntimeError(r.text)
     except Exception as ex:
         logger.error("Call people failed: {}".format(ex.args), exc_info=True)
+
 
 def getLogger(name):
     logger = logging.getLogger(name)
@@ -338,5 +336,3 @@ class CustomJsonFormatter(json_log_formatter.JSONFormatter):
             "%Y-%m-%d %H:%M:%S"
         )
         return super(CustomJsonFormatter, self).json_record(message, extra, record)
-
-

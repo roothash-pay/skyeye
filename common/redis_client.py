@@ -140,5 +140,6 @@ class GlobalRedisWrapper:
             ins = GlobalRedisWrapper.__fallback(e)
             return ins.decr(*args, **kwargs)
 
+
 def global_redis():
     return GlobalRedisWrapper

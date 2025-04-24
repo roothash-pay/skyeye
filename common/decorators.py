@@ -1,22 +1,25 @@
 import time
 from functools import wraps
-from typing import Any, Callable
+from typing import Callable
+
 from django.contrib.auth.models import Permission
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
+from django.http import HttpRequest, HttpResponse
 
 from common.helpers import getLogger
 
 logger = getLogger(__name__)
 
 
-def permission_required(permission:Permission) -> Callable:
+def permission_required(permission: Permission) -> Callable:
     def _decorator(func):
-        def __w(request:HttpRequest, *args, **kw):
+        def __w(request: HttpRequest, *args, **kw):
             user = request.user
             if user.has_perm(permission):
                 return func(request, *args, **kw)
             return HttpResponse('Forbidden', status=403)
+
         return __w
+
     return _decorator
 
 
@@ -39,5 +42,7 @@ def retry_on() -> Callable:
                         continue
                     else:
                         raise e
+
         return inner
+
     return _retry

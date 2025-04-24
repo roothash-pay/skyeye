@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from typing import Any, Dict, Optional, Tuple
-from django.db import models
-import time
-import pickle
 import logging
-from common.redis_client import local_redis
+import pickle
+import time
+from typing import Optional
 
+from django.db import models
+
+from common.redis_client import local_redis
 
 COMMON_STATUS = [(x, x) for x in ['ACTIVE', 'DOWN', 'DISABLE', 'CLOSED']]
 TIMEFRAME = [(x, x) for x in ['1m', '5m', '15m', '30m', '1h']]

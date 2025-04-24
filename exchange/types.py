@@ -1,23 +1,21 @@
 import time
 from datetime import datetime
-
-import ntplib
-from dateutil.parser import parse
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
 
-import pytz
+import ntplib
+from dateutil.parser import parse
 from django.conf import settings
 from pytz import timezone
 
-from common.helpers import dec, decprice, decstr, d2
+from common.helpers import dec, decstr, d2
 from exchange.models import Asset
 
 
 class Ticker:
-    timestamp:float
-    buy_price:Decimal
-    sell_price:Decimal
+    timestamp: float
+    buy_price: Decimal
+    sell_price: Decimal
     exchange: Optional[str] = None
 
     def as_json(self) -> Dict[str, Any]:
@@ -66,7 +64,7 @@ class OrderEntry:
     amount: Decimal
 
     @classmethod
-    def from_json(cls, data:List[Any]) -> 'OrderEntry':
+    def from_json(cls, data: List[Any]) -> 'OrderEntry':
         order = OrderEntry()
         order.price = dec(str(data[0]))
         order.amount = dec(str(data[1]))
@@ -104,7 +102,7 @@ class Orderbook:
         return self.asks[0].price / d2 + self.bids[0].price / d2
 
     @classmethod
-    def from_json(cls, data:Dict[str, Any]) -> 'Orderbook':
+    def from_json(cls, data: Dict[str, Any]) -> 'Orderbook':
         ob = Orderbook()
         ob.bids = [OrderEntry.from_json(d) for d in data['bids']]
         ob.asks = [OrderEntry.from_json(d) for d in data['asks']]
@@ -141,13 +139,13 @@ class Orderbook:
             'asks': [order.as_json() for order in self.asks],
         }
         if self.exchange:
-            asj['exchange'] = self.exchange # type: ignore
+            asj['exchange'] = self.exchange  # type: ignore
         if self.nonce:
-            asj['nonce'] = self.nonce # type: ignore
+            asj['nonce'] = self.nonce  # type: ignore
         if self.datetime:
-            asj['datetime'] = self.datetime # type: ignore
+            asj['datetime'] = self.datetime  # type: ignore
         if self.source:
-            asj['source'] = self.source # type: ignore
+            asj['source'] = self.source  # type: ignore
         return asj
 
     def selfie_entries(self, side: str) -> List[OrderEntry]:
@@ -183,6 +181,7 @@ class OrderBookL2(object):
             result.append(orderbook)
         return result
 
+
 class Instrument:
     min_order_amount: Decimal
     name: str
@@ -206,7 +205,8 @@ class Instrument:
             name = item['instrument_name']
             # 我们这里的base和quote相反
             instrument.base_asset = Asset.objects.get(name=item['quote_currency'])
-            instrument.close_at = datetime.fromtimestamp(item['expiration_timestamp'] / 1000).astimezone(timezone('UTC'))
+            instrument.close_at = datetime.fromtimestamp(item['expiration_timestamp'] / 1000).astimezone(
+                timezone('UTC'))
             instrument.name = name
             instrument.expiration_timestamp = item['expiration_timestamp']
             instrument.strike = dec(item['strike'])

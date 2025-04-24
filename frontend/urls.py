@@ -1,10 +1,10 @@
 # type: ignore
 
 from typing import Any, List
-from django.contrib import admin
-from django.urls import include, path
-from frontend.api_v1.chainup import market_price, asset_otc_price, symbol_market_price
 
+from django.urls import path
+
+from frontend.api_v1.chainup import market_price, asset_otc_price, symbol_market_price
 
 urlpatterns: List[Any] = [
     path(r'market_price', market_price, name='market_price'),

@@ -30,7 +30,7 @@ SLEEP_CONFIG = {
 
 SLEEP_CONFIG.update(settings.CRAWLER_SLEEP_CONFIG)
 
-EXCHANGE_FUNDING_RATE_KEY = 'trade:%s:%s:funding_rates'  # exchange/symbol: trade:huobipro:BTC-USD:funding_rates
+EXCHANGE_FUNDING_RATE_KEY = 'trade:%s:%s:funding_rates'  # exchange/symbol: trade:huobi:BTC-USD:funding_rates
 
 EXCHANGE_BLOCKING = 'exchange:%s:%s'
 EXCHANGE_SYMBOL_MARKETS = 'exchange_markets:%s'  # 'exchange_markets:bitmex'

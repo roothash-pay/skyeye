@@ -1,4 +1,5 @@
 from django.contrib import admin
+
 from backoffice.models import (
     MgObPersistence,
     OtcAssetPrice

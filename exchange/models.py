@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 
 
-import time
-import pickle
 import logging
-from typing import Any, Dict, Optional, Tuple
-from django.db import models, transaction
-from common.redis_client import local_redis
-from common.models import BaseModel
+import pickle
+import time
+from typing import Optional
 
+from django.db import models
+
+from common.models import BaseModel
+from common.redis_client import local_redis
 
 CommonStatus = [(x, x) for x in ['Active', 'Down']]
 ExchangeCate = [(x, x) for x in ['Cex', 'Dex']]
 SymbolCat = [(x, x) for x in ['Spot', 'Future', 'Option']]
-
 
 logger = logging.getLogger(__name__)
 

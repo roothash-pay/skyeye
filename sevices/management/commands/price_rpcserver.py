@@ -1,10 +1,12 @@
-#encoding=utf-8
+# encoding=utf-8
+
+from concurrent import futures
 
 import grpc
 from django.core.management.base import BaseCommand
-from concurrent import futures
-from sevices.savourrpc import market_pb2_grpc
+
 from sevices.grpc_server import PriceServer
+from sevices.savourrpc import market_pb2_grpc
 
 
 class Command(BaseCommand):

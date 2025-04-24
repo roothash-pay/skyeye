@@ -16,17 +16,19 @@ parent:
   </a>
 </div>
 
-skyeye is the market aggregator of the Savour project, which aggregates the market of centralized and decentralized transactions. It is written in python and provides grpc interface for upper-layer service access.
+skyeye is the market aggregator of the Savour project, which aggregates the market of centralized and decentralized
+transactions. It is written in python and provides grpc interface for upper-layer service access.
 
-**tips**: requirement [python3.8+](https://www.python.org/)
+**tips**: requirement [python3.12+](https://www.python.org/)
 
 ## Install And Local Runing
 
 ### 1.create virtual evn
+
 ```
 git clone git@github.com:roothash-pay/hailstone.git
 cd hailstone
-python3 -m venv .env
+python3 -m venv .venv
 source venv/bin/activate
 ```
 
@@ -37,29 +39,38 @@ pip3 install -r requirements.txt
 ```
 
 ### 3.config database
+
 ```
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "hailstone",
+        "NAME": "skyeye",
         "USER": "guoshijiang",
         "PASSWORD": "",
         "HOST": "127.0.0.1",
     },
 }
 ```
+
 Config it according to you environment
 
 ### 4.migrate database
 
 ```
-python3 manager migrations
-python3 manager migrate
+python3 manage.py makemigrations
+python3 manage.py migrate
 ```
 
 ### 5. run dev
+
 ```
-python3 manager runserver
+python3 manage.py runserver
+```
+
+### 6. run crawl
+
+```
+python3 manage.py broker_crawler crawler_fetch_24tickers
 ```
 
 ## Contribute
@@ -91,4 +102,5 @@ git push origin xxx
 Have a pr on your github and submit it to the skyeye repository
 
 5.review
-After the skyeye code maintainer has passed the review, the code will be merged into the skyeye repo. At this point, your PR submission is complete
+After the skyeye code maintainer has passed the review, the code will be merged into the skyeye repo. At this point,
+your PR submission is complete

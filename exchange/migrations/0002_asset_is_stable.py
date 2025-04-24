@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ('exchange', '0001_initial'),
     ]
@@ -13,6 +12,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='asset',
             name='is_stable',
-            field=models.CharField(choices=[('Yes', 'Yes'), ('No', 'No')], default='No', max_length=100, verbose_name='是否为稳定币'),
+            field=models.CharField(choices=[('Yes', 'Yes'), ('No', 'No')], default='No', max_length=100,
+                                   verbose_name='是否为稳定币'),
         ),
     ]

@@ -5,7 +5,6 @@ SECRET_KEY = 'xrszzb$tq7!!6n0h9%%g@0)*g%o*eg5g2+*u4vi1-t9nxwc*vs'
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
-
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -54,7 +53,7 @@ WSGI_APPLICATION = 'skyeye.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "skeye",
+        "NAME": "skyeye",
         "USER": "guoshijiang",
         "PASSWORD": "",
         "HOST": "127.0.0.1",
@@ -119,7 +118,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/2.2/topics/i18n/
 
@@ -133,38 +131,48 @@ USE_L10N = True
 
 USE_TZ = True
 
-
 STATIC_URL = '/static/'
 QUOTE_ORDERBOOK_LIMIT = 15
 QUOTE_ORDERBOOK_SMALL_LIMIT = 5
 QUOTE_OB_USDTUSDS_LIMIT = 5
 
 MERGE_SYMBOL_CONFIG = {
-
-    "BTC/USDS": {'bitmex': 'BTC/USD', 'okex': 'BTC-USD-SWAP', 'huobipro': 'BTC-USD'},
-    "ETH/USDS": {'okex': 'ETH-USD-SWAP', 'huobipro': 'ETH-USD'},
+    "BTC/USDS": {'bitmex': 'BTC/USD', 'okx': 'BTC-USD-SWAP', 'huobi': 'BTC-USD'},
+    "ETH/USDS": {'okx': 'ETH-USD-SWAP', 'huobi': 'ETH-USD'},
     "USDT/USDS": {},
 
-    "BTC/USDT": {'binance': 'BTC/USDT', 'huobipro': 'BTC/USDT'},
-    "EOS/USDT": {'binance': 'EOS/USDT', 'huobipro': 'EOS/USDT'},
-    "ETH/USDT": {'binance': 'ETH/USDT', 'huobipro': 'ETH/USDT'},
-    "LTC/USDT": {'binance': 'LTC/USDT', 'huobipro': 'LTC/USDT'},
+    "BTC/USDT": {'binance': 'BTC/USDT', 'huobi': 'BTC/USDT', 'okx': 'BTC/USDT', 'bybit': 'BTC/USDT', 'bitget': 'BTC/USDT', 'bitmex': 'BTC/USDT'},
+    "EOS/USDT": {'binance': 'EOS/USDT', 'huobi': 'EOS/USDT', 'okx': 'EOS/USDT', 'bybit': 'EOS/USDT', 'bitget': 'EOS/USDT', 'bitmex': 'EOS/USDT'},
+    "ETH/USDT": {'binance': 'ETH/USDT', 'huobi': 'ETH/USDT', 'okx': 'ETH/USDT', 'bybit': 'ETH/USDT', 'bitget': 'ETH/USDT', 'bitmex': 'ETH/USDT'},
+    "LTC/USDT": {'binance': 'LTC/USDT', 'huobi': 'LTC/USDT', 'okx': 'LTC/USDT', 'bybit': 'LTC/USDT', 'bitget': 'LTC/USDT', 'bitmex': 'LTC/USDT'},
 
-    "EOS/BTC": {'binance': 'EOS/BTC', 'huobipro': 'EOS/BTC'},
-    "ETH/BTC": {'binance': 'ETH/BTC', 'huobipro': 'ETH/BTC'},
-    "LTC/BTC": {'binance': 'LTC/BTC', 'huobipro': 'LTC/BTC'},
+    "EOS/BTC": {'binance': 'EOS/BTC', 'huobi': 'EOS/BTC', 'okx': 'EOS/BTC', 'bybit': 'EOS/BTC', 'bitget': 'EOS/BTC', 'bitmex': 'EOS/BTC'},
+    "ETH/BTC": {'binance': 'ETH/BTC', 'huobi': 'ETH/BTC', 'okx': 'ETH/BTC', 'bybit': 'ETH/BTC', 'bitget': 'ETH/BTC', 'bitmex': 'ETH/BTC'},
+    "LTC/BTC": {'binance': 'LTC/BTC', 'huobi': 'LTC/BTC', 'okx': 'LTC/BTC', 'bybit': 'LTC/BTC', 'bitget': 'LTC/BTC', 'bitmex': 'LTC/BTC'},
 
-    "CRV/USDT": {'binance': 'CRV/USDT', 'huobipro': 'CRV/USDT', 'okex': 'CRV/USDT'},
-    "SUSHI/USDT": {'binance': 'SUSHI/USDT', 'huobipro': 'SUSHI/USDT', 'okex': 'SUSHI/USDT'},
-    "UNI/USDT": {'binance': 'UNI/USDT', 'huobipro': 'UNI/USDT', 'okex': 'UNI/USDT'},
+    "CRV/USDT": {'binance': 'CRV/USDT', 'huobi': 'CRV/USDT', 'okx': 'CRV/USDT'},
+    "SUSHI/USDT": {'binance': 'SUSHI/USDT', 'huobi': 'SUSHI/USDT', 'okx': 'SUSHI/USDT'},
+    "UNI/USDT": {'binance': 'UNI/USDT', 'huobi': 'UNI/USDT', 'okx': 'UNI/USDT'},
+    "SOL/USDT": {'binance': 'SOL/USDT', 'huobi': 'SOL/USDT', 'okx': 'SOL/USDT', 'bybit': 'SOL/USDT', 'bitget': 'SOL/USDT', 'bitmex': 'SOL/USDT'},
 }
 
-FETCHABLE_EXCHANGES = ["bitmex", "huobipro", "binance", "okex"]
+FETCHABLE_EXCHANGES = ["bitmex", "huobi", "binance", "okx", "bybit", "bitget"]
 CRAWLER_SLEEP_CONFIG = {}
-C_PROXIES = ["127.0.0.1:41091"]
+C_PROXIES = []
 GRPC_MAX_MESSAGE_LENGTH = 2048
+
+# External API Configurations
+FRANKFURTER_API_URL = "https://api.frankfurter.app/latest?from=USD&to=CNY"
+DEFAULT_USD_CNY_RATE = '7.29'  # Default fallback rate as string
+
+# Quote assets considered stable enough to represent USD price in OTC calculations
+ACCEPTABLE_QUOTE_ASSETS_FOR_OTC = ['USDT', 'USDC']
 
 try:
     from .local_settings import *
 except ImportError:
     pass
+
+# Default primary key field type
+# https://docs.djangoproject.com/en/stable/ref/settings/#default-auto-field
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

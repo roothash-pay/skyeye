@@ -1,13 +1,10 @@
-#encoding=utf-8
+# encoding=utf-8
 
-import pytz
-import json
-import logging
+from backoffice.models import MgObPersistence, Asset, OtcAssetPrice
 from common.helpers import (
     ok_json,
     error_json
 )
-from backoffice.models import MgObPersistence, Asset, OtcAssetPrice
 
 
 def market_price(request):
@@ -28,7 +25,23 @@ def market_price(request):
 
 def asset_otc_price(request):
     asset_name = request.GET.get("asset_name")
-    otc_price = OtcAssetPrice.objects.filter(asset=Asset.objects.filter(name=asset_name).first()).first()
+    if not asset_name:
+        return error_json("Parameter 'asset_name' is required.", code=400, status=400)
+
+    # Fetch the asset first to handle case where asset itself doesn't exist
+    asset = Asset.objects.filter(name=asset_name).first()
+    if not asset:
+        return error_json(f"Asset '{asset_name}' not found.", code=404, status=404)
+
+    # Now fetch the OtcAssetPrice linked to the found asset
+    otc_price = OtcAssetPrice.objects.filter(asset=asset).first()
+
+    # Check if OtcAssetPrice record exists
+    if otc_price is None:
+        # Return a specific error indicating OTC price not found for this asset
+        return error_json(f"OTC price data not available for asset '{asset_name}'.", code=404, status=404)
+
+    # If found, return the dict representation
     return ok_json(otc_price.as_dict())
 
 
@@ -38,6 +51,3 @@ def symbol_market_price(request):
     for price in price_list:
         price_result.append(price.as_dict())
     return ok_json(price_result)
-
-
-
