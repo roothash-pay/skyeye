@@ -3,9 +3,9 @@ from typing import Optional, List, Dict, Any
 
 import redis.asyncio as aioredis
 
+from apps.cmc_proxy.consts import CMC_QUOTE_DATA_KEY, CMC_SUPPLEMENT_POOL_KEY
 from common.helpers import getLogger
 from common.redis_client import get_async_redis_client
-from apps.cmc_proxy.consts import CMC_QUOTE_DATA_KEY, CMC_SUPPLEMENT_POOL_KEY
 
 logger = getLogger(__name__)
 
@@ -108,7 +108,7 @@ async def acquire_lock(redis_client, lock_key, timeout=30):
 async def release_lock(redis_client, lock_key):
     """释放Redis分布式锁"""
     try:
-        return await redis_client.delete(lock_key) 
+        return await redis_client.delete(lock_key)
     except Exception as e:
         logger.error(f"Error releasing lock {lock_key}: {e}", exc_info=True)
-        return False 
+        return False

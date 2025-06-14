@@ -39,14 +39,15 @@ bash scripts/local/setup_env.sh
 
 ### `manage_celery.sh` - Celery 任务管理
 ```bash
-./scripts/local/manage_celery.sh start     # 启动worker (后台)
-./scripts/local/manage_celery.sh start-fg  # 启动worker (前台)
-./scripts/local/manage_celery.sh stop      # 停止worker
-./scripts/local/manage_celery.sh restart   # 重启worker
-./scripts/local/manage_celery.sh flower-bg # 启动监控UI
-./scripts/local/manage_celery.sh start-beat-db # 启动调度器
+./scripts/local/manage_celery.sh start     # 启动所有服务 (worker + beat)
+./scripts/local/manage_celery.sh stop      # 停止所有服务 (worker + beat)
+./scripts/local/manage_celery.sh restart   # 重启所有服务
+./scripts/local/manage_celery.sh status    # 检查所有服务状态
+./scripts/local/manage_celery.sh logs      # 查看worker日志
+./scripts/local/manage_celery.sh flower    # 启动监控UI
+./scripts/local/manage_celery.sh init-tasks # 初始化定时任务
 ```
-**功能**: 管理Celery异步任务处理系统
+**功能**: 管理Celery异步任务处理系统，统一管理worker和beat调度器
 
 ### `quick_check.sh` - 系统状态检查
 ```bash
@@ -168,7 +169,6 @@ uv run python manage.py migrate
 
 # 4. 启动Celery服务
 ./scripts/local/manage_celery.sh start
-./scripts/local/manage_celery.sh start-beat-db
 
 # 5. 启动Django开发服务器
 uv run python manage.py runserver

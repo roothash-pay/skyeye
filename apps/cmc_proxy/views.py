@@ -1,3 +1,4 @@
+import asyncio
 import math
 from django.views import View
 
@@ -138,8 +139,19 @@ class CmcMarketDataView(View):
             kline_data = await get_klines_for_asset(asset, **kline_params)
             market_data.update(kline_data)
         except CmcAsset.DoesNotExist:
-            # 如果资产不存在，仅返回市场数据，K线数据为空
-            market_data.update({'klines': [], 'high_24h': None, 'low_24h': None})
+            # 资产不存在，等待短暂时间后重试一次（处理异步创建延迟）
+            logger.info(f"Asset cmc_id={cmc_id_int} not found, waiting for async creation...")
+            await asyncio.sleep(0.5)  # 等待500ms
+            
+            try:
+                asset = await CmcAsset.objects.aget(cmc_id=cmc_id_int)
+                kline_data = await get_klines_for_asset(asset, **kline_params)
+                market_data.update(kline_data)
+                logger.info(f"Successfully retrieved asset and klines for cmc_id={cmc_id_int} after retry")
+            except CmcAsset.DoesNotExist:
+                # 最终仍未找到资产，返回空K线数据
+                logger.warning(f"Asset cmc_id={cmc_id_int} still not found after retry")
+                market_data.update({'klines': [], 'high_24h': None, 'low_24h': None})
 
         return ok_json(market_data)
 

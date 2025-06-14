@@ -1,35 +1,52 @@
 import asyncio
+import json
 
 from celery import shared_task
 from django.conf import settings
-from django.core.management import call_command
 from django_celery_beat.models import PeriodicTask
 
 from apps.cmc_proxy import consts
-from apps.cmc_proxy.models import CmcKline
+from apps.cmc_proxy.models import CmcAsset, CmcKline, CmcMarketData
 from apps.cmc_proxy.services import CoinMarketCapClient, get_cmc_service
-from apps.cmc_proxy.utils import CMCRedisClient
-from apps.cmc_proxy.utils import acquire_lock, release_lock
+from apps.cmc_proxy.utils import CMCRedisClient, acquire_lock, release_lock
 from common.helpers import getLogger
 
 logger = getLogger(__name__)
 
 
-# 异步函数，不直接用作Celery任务
-async def _process_pending_cmc_batch_requests():
-    """处理待处理的CoinMarketCap批量请求 (异步函数)"""
-    logger.info("Starting to process pending CMC batch requests")
+def _run_async_with_new_loop(coro):
+    """创建新的事件循环并运行异步协程的辅助函数"""
+    loop = None
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        if loop and not loop.is_closed():
+            loop.close()
+
+
+async def _process_pending_cmc_batch_requests_with_lock(task_lock_key):
+    """带任务级别锁的批量处理函数"""
+    logger.info("Starting to process pending CMC batch requests with task lock")
 
     cmc_redis = None
-    lock_acquired = False
+    task_lock_acquired = False
+    batch_lock_acquired = False
 
     try:
         cmc_redis = await CMCRedisClient.create(settings.REDIS_CMC_URL)
 
-        # 尝试获取锁
-        lock_acquired = await acquire_lock(cmc_redis, consts.CMC_BATCH_PROCESSING_LOCK_KEY, timeout=30)
-        if not lock_acquired:
-            logger.warning("Failed to acquire lock for batch processing, another process might be running")
+        # 尝试获取任务级别锁（防止同一定时任务的多个实例）
+        task_lock_acquired = await acquire_lock(cmc_redis, task_lock_key, timeout=5)
+        if not task_lock_acquired:
+            logger.info("Task lock not acquired, another instance of this scheduled task is running")
+            return
+
+        # 尝试获取批量处理锁
+        batch_lock_acquired = await acquire_lock(cmc_redis, consts.CMC_BATCH_PROCESSING_LOCK_KEY, timeout=30)
+        if not batch_lock_acquired:
+            logger.warning("Failed to acquire batch processing lock, another process might be running")
             return
 
         # 从Redis列表中获取待处理请求
@@ -58,8 +75,8 @@ async def _process_pending_cmc_batch_requests():
         unique_ids = list(set(pending_ids))
         logger.info(f"Got {len(unique_ids)} unique IDs from pending requests")
 
-        # 如果实际取出的ID数量少于目标批次大小，从补充池获取补充
-        if len(unique_ids) < batch_size:
+        # 只有在有实际待处理请求时才从补充池获取补充，避免无限重复请求
+        if len(unique_ids) > 0 and len(unique_ids) < batch_size:
             supplement_count = batch_size - len(unique_ids)
             supplement_ids = await cmc_redis.get_from_supplement_pool(supplement_count)
 
@@ -68,6 +85,8 @@ async def _process_pending_cmc_batch_requests():
             unique_ids.extend(supplement_ids)
 
             logger.info(f"Added {len(supplement_ids)} IDs from supplement pool")
+        elif len(unique_ids) == 0:
+            logger.info("No pending requests found, skipping supplement pool to avoid infinite requests")
 
         if not unique_ids:
             logger.info("No IDs to process in this batch")
@@ -99,15 +118,43 @@ async def _process_pending_cmc_batch_requests():
     except Exception as e:
         logger.error(f"Critical error during batch processing: {e}", exc_info=True)
     finally:
-        if lock_acquired and cmc_redis:
+        if task_lock_acquired and cmc_redis:
+            await release_lock(cmc_redis, task_lock_key)
+        if batch_lock_acquired and cmc_redis:
             await release_lock(cmc_redis, consts.CMC_BATCH_PROCESSING_LOCK_KEY)
         if cmc_redis:
             await cmc_redis.aclose()
 
 
-async def _daily_full_data_sync():
-    """每日全量同步 CoinMarketCap 数据 (异步函数)"""
+async def _daily_full_data_sync_with_lock():
+    """带锁的每日全量同步 CoinMarketCap 数据"""
+    task_lock_key = "cmc:lock:daily_full_sync_task"
+    cmc_redis = None
+    lock_acquired = False
 
+    try:
+        cmc_redis = await CMCRedisClient.create(settings.REDIS_CMC_URL)
+
+        # 尝试获取任务锁
+        lock_acquired = await acquire_lock(cmc_redis, task_lock_key, timeout=10)
+        if not lock_acquired:
+            logger.info("Daily full sync task lock not acquired, another instance is running")
+            return 0
+
+        return await _daily_full_data_sync_implementation(cmc_redis)
+
+    except Exception as e:
+        logger.error(f"Error in daily_full_data_sync_with_lock: {e}", exc_info=True)
+        return 0
+    finally:
+        if lock_acquired and cmc_redis:
+            await release_lock(cmc_redis, task_lock_key)
+        if cmc_redis:
+            await cmc_redis.aclose()
+
+
+async def _daily_full_data_sync_implementation(cmc_redis):
+    """每日全量同步的具体实现"""
     logger.info("Starting daily full sync of CoinMarketCap data")
 
     # 暂停批量请求任务以避免冲突
@@ -121,10 +168,8 @@ async def _daily_full_data_sync():
     except PeriodicTask.DoesNotExist:
         logger.warning("Batch request task not found, continuing without disabling")
 
-    cmc_redis = None
     client = CoinMarketCapClient()
     try:
-        cmc_redis = await CMCRedisClient.create(settings.REDIS_CMC_URL)
         page_size = 5000
         start = 1
         all_tokens_data = []
@@ -192,38 +237,6 @@ async def _daily_full_data_sync():
             except Exception as e:
                 logger.error(f"Failed to re-enable batch request task: {e}", exc_info=True)
 
-        if cmc_redis:
-            await cmc_redis.aclose()
-
-
-# 普通函数，用作Celery任务的包装器
-@shared_task
-def process_pending_cmc_batch_requests():
-    """处理待处理的CoinMarketCap批量请求 (Celery任务)"""
-    loop = None
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(_process_pending_cmc_batch_requests())
-    finally:
-        if loop:
-            if not loop.is_closed():
-                loop.close()
-
-
-@shared_task
-def daily_full_data_sync():
-    """每日全量同步 CoinMarketCap 数据 (Celery任务)"""
-    loop = None
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(_daily_full_data_sync())
-    finally:
-        if loop:
-            if not loop.is_closed():
-                loop.close()
-
 
 async def _process_cmc_klines(count: int, only_missing: bool):
     """公共 CMC K 线处理异步函数"""
@@ -239,28 +252,153 @@ async def _process_cmc_klines(count: int, only_missing: bool):
                 await cmc_service.process_klines(count=24, only_missing=True)
         # 执行请求的模式更新或初始化
         result = await cmc_service.process_klines(count=count, only_missing=only_missing)
-        logger.info(f"CMC klines {mode} completed. Success: {result['success']}, Failed: {result['failed']}, Total klines: {result['total_klines']}")
+        logger.info(
+            f"CMC klines {mode} completed. Success: {result['success']}, Failed: {result['failed']}, Total klines: {result['total_klines']}")
         return result['total_klines']
     except Exception as e:
         logger.error(f"Critical error during klines {mode} task: {e}", exc_info=True)
         return 0
 
 
-@shared_task
-def update_cmc_klines():
-    """更新CMC K线数据 (Celery任务) - 增量更新"""
-    loop = None
+async def _process_cmc_klines_with_lock(task_lock_key, count: int, only_missing: bool):
+    """带锁的K线处理函数"""
+    cmc_redis = None
+    lock_acquired = False
+
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(_process_cmc_klines(count=1, only_missing=False))
+        cmc_redis = await CMCRedisClient.create(settings.REDIS_CMC_URL)
+
+        # 尝试获取任务锁
+        lock_acquired = await acquire_lock(cmc_redis, task_lock_key, timeout=10)
+        if not lock_acquired:
+            logger.info("Update klines task lock not acquired, another instance is running")
+            return 0
+
+        return await _process_cmc_klines(count, only_missing)
+
+    except Exception as e:
+        logger.error(f"Error in _process_cmc_klines_with_lock: {e}", exc_info=True)
+        return 0
     finally:
-        if loop:
-            if not loop.is_closed():
-                loop.close()
+        if lock_acquired and cmc_redis:
+            await release_lock(cmc_redis, task_lock_key)
+        if cmc_redis:
+            await cmc_redis.aclose()
 
 
-@shared_task
-def sync_cmc_data_task():
+async def _sync_cmc_data_with_lock():
+    """带锁的数据同步函数"""
+    task_lock_key = "cmc:lock:sync_data_task"
+    cmc_redis = None
+    lock_acquired = False
+
+    try:
+        cmc_redis = await CMCRedisClient.create(settings.REDIS_CMC_URL)
+
+        # 尝试获取任务锁
+        lock_acquired = await acquire_lock(cmc_redis, task_lock_key, timeout=5)
+        if not lock_acquired:
+            logger.info("Sync data task lock not acquired, another instance is running")
+            return
+
+        # 直接执行同步逻辑，避免调用 management command 中的 asyncio.run()
+        await _sync_data_from_redis_implementation(cmc_redis)
+
+    except Exception as e:
+        logger.error(f"Error in sync_cmc_data_with_lock: {e}", exc_info=True)
+    finally:
+        if lock_acquired and cmc_redis:
+            await release_lock(cmc_redis, task_lock_key)
+        if cmc_redis:
+            await cmc_redis.aclose()
+
+
+async def _sync_data_from_redis_implementation(cmc_redis):
+    """直接实现数据同步逻辑，避免 asyncio.run() 冲突"""
+    from apps.cmc_proxy.consts import CMC_QUOTE_DATA_KEY
+
+    # 使用 scan_iter 高效地遍历所有代币数据的键
+    pattern = CMC_QUOTE_DATA_KEY.replace("%(symbol_id)s", "*")
+    keys = [key async for key in cmc_redis.scan_iter(match=pattern)]
+
+    if not keys:
+        logger.warning("No CMC data keys found in Redis to sync.")
+        return
+
+    logger.info(f"Found {len(keys)} CMC data keys in Redis.")
+
+    assets_created_count = 0
+    assets_updated_count = 0
+    market_data_updated_count = 0
+    failed_count = 0
+    total_count = len(keys)
+
+    for key in keys:
+        try:
+            raw_data = await cmc_redis.get(key)
+            if not raw_data:
+                failed_count += 1
+                continue
+
+            api_data = json.loads(raw_data)
+            cmc_id = api_data.get('id')
+            if not cmc_id:
+                logger.warning(f"Skipping key {key} due to missing 'id' field.")
+                failed_count += 1
+                continue
+
+            # 1. 同步 CmcAsset (资产元数据)
+            asset, created = await CmcAsset.objects.update_or_create_from_api_data(api_data)
+            if not asset:
+                failed_count += 1
+                continue
+
+            if created:
+                assets_created_count += 1
+            else:
+                assets_updated_count += 1
+
+            # 2. 同步 CmcMarketData (最新行情)
+            await CmcMarketData.objects.update_or_create_from_api_data(asset, api_data)
+            market_data_updated_count += 1
+
+        except json.JSONDecodeError:
+            logger.error(f"Failed to decode JSON from key {key}.")
+            failed_count += 1
+        except Exception as e:
+            logger.error(f"Error processing data for key {key}: {e}", exc_info=True)
+            failed_count += 1
+
+    logger.info(f'Successfully synchronized CMC data. '
+                f'Total Processed: {total_count}, '
+                f'Assets Created: {assets_created_count}, '
+                f'Assets Updated: {assets_updated_count}, '
+                f'Market Data Touched: {market_data_updated_count}, '
+                f'Failed: {failed_count}')
+
+
+# Celery任务包装器
+@shared_task(bind=True)
+def process_pending_cmc_batch_requests(self):
+    """处理待处理的CoinMarketCap批量请求 (Celery任务)"""
+    task_lock_key = f"cmc:lock:batch_processing_task"
+    return _run_async_with_new_loop(_process_pending_cmc_batch_requests_with_lock(task_lock_key))
+
+
+@shared_task(bind=True)
+def daily_full_data_sync(self):
+    """每日全量同步 CoinMarketCap 数据 (Celery任务)"""
+    return _run_async_with_new_loop(_daily_full_data_sync_with_lock())
+
+
+@shared_task(bind=True)
+def update_cmc_klines(self, count=1, only_missing=False):
+    """更新CMC K线数据 (Celery任务) - 增量更新"""
+    task_lock_key = "cmc:lock:update_klines_task"
+    return _run_async_with_new_loop(_process_cmc_klines_with_lock(task_lock_key, count, only_missing))
+
+
+@shared_task(bind=True)
+def sync_cmc_data_task(self):
     """同步CMC数据到数据库 (Celery任务)"""
-    call_command('sync_cmc_data', '--run-once')
+    return _run_async_with_new_loop(_sync_cmc_data_with_lock())

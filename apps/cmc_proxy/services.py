@@ -11,10 +11,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from apps.cmc_proxy.consts import CMC_N1, CMC_BATCH_PROCESSING_LOCK_KEY, CMC_BATCH_REQUESTS_PENDING_KEY, \
     CMC_T1_MERGE_WINDOW_SECONDS, CMC_TTL_HOT, CMC_QUOTE_DATA_KEY, CMC_TTL_BASE
+from apps.cmc_proxy.helpers import KlineDataProcessor
 from apps.cmc_proxy.models import CmcAsset, CmcKline, CmcMarketData
 from apps.cmc_proxy.utils import CMCRedisClient
 from apps.cmc_proxy.utils import acquire_lock, release_lock
-from apps.cmc_proxy.helpers import KlineDataProcessor
 from common.helpers import getLogger
 
 logger = getLogger(__name__)
@@ -167,7 +167,7 @@ class CoinMarketCapService(metaclass=SingletonMeta):
 
         try:
             await self._ensure_initialized()
-            
+
             # 尝试获取锁
             lock_acquired = await acquire_lock(self.cmc_redis, CMC_BATCH_PROCESSING_LOCK_KEY, timeout=30)
             if not lock_acquired:
@@ -216,7 +216,7 @@ class CoinMarketCapService(metaclass=SingletonMeta):
 
         try:
             await self._ensure_initialized()
-            
+
             symbol_id = str(symbol_id)
             position = await self.cmc_redis.lpos(CMC_BATCH_REQUESTS_PENDING_KEY, symbol_id)
             if position is not None:
@@ -239,7 +239,7 @@ class CoinMarketCapService(metaclass=SingletonMeta):
         """
         try:
             await self._ensure_initialized()
-            
+
             # 步骤1: 直接检查缓存
             cached_data = await self.cmc_redis.get_token_quote_data(symbol_id)
             if cached_data:
@@ -257,7 +257,7 @@ class CoinMarketCapService(metaclass=SingletonMeta):
             if data_from_batch:
                 logger.info(f"Got {symbol_id} from batch processing")
                 return data_from_batch
-            
+
             logger.info(f"No data found for {symbol_id} after all attempts")
             return None
         except Exception as e:
@@ -455,14 +455,14 @@ class CoinMarketCapService(metaclass=SingletonMeta):
                 self._cmc_redis = None
             except Exception as e:
                 logger.error(f"Error closing Redis connection: {e}", exc_info=True)
-        
+
         if self._client:
             try:
                 await self._client.close()
                 self._client = None
             except Exception as e:
                 logger.error(f"Error closing API client: {e}", exc_info=True)
-        
+
         self._initialized = False
 
 
@@ -470,10 +470,12 @@ async def get_cmc_service() -> CoinMarketCapService:
     """获取CoinMarketCapService的单例实例"""
     return await CoinMarketCapService()
 
+
 async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: datetime, end_time: datetime,
                                start_time_24h: datetime) -> Dict[str, Any]:
     """
     从数据库获取并处理单个资产的K线数据。
+    如果数据库没有数据，尝试从CMC API获取。
     """
     klines_qs = CmcKline.objects.filter(
         asset=asset,
@@ -483,6 +485,31 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
     ).order_by('timestamp')
 
     klines = await KlineDataProcessor.serialize_klines_data(klines_qs)
+
+    # 如果数据库没有K线数据，尝试从CMC API获取
+    if not klines:
+        logger.info(f"No klines found for asset {asset.symbol} (cmc_id: {asset.cmc_id}), attempting to fetch from CMC")
+        try:
+            service = await get_cmc_service()
+            # 获取24小时的历史数据用于初始化
+            result = await service.fetch_and_store_klines_batch([asset.cmc_id], count=24, batch_size=1)
+
+            if result['success'] > 0:
+                logger.info(f"Successfully fetched and stored {result['total_klines']} klines for {asset.symbol}")
+                # 重新查询数据库获取刚存储的K线数据
+                klines_qs = CmcKline.objects.filter(
+                    asset=asset,
+                    timeframe=timeframe,
+                    timestamp__gte=start_time,
+                    timestamp__lte=end_time
+                ).order_by('timestamp')
+                klines = await KlineDataProcessor.serialize_klines_data(klines_qs)
+            else:
+                logger.warning(f"Failed to fetch klines for {asset.symbol} from CMC API")
+
+        except Exception as e:
+            logger.error(f"Error fetching klines for asset {asset.symbol}: {e}", exc_info=True)
+
     high_24h, low_24h = KlineDataProcessor.calculate_high_low_24h(klines, start_time_24h)
 
     return {
@@ -494,43 +521,34 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
 
 async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
     """
-    获取单个代币的 CMC 最新市场数据。
-    如果数据库数据被视为过期，会尝试实时获取最新数据并更新Redis缓存。
-    实际数据库更新由后台任务负责。
+    获取单个代币的最新市场数据。
+    优先从数据库获取，数据不存在或过期时从CMC API获取。
     """
     logger.info(f"get_latest_market_data called for cmc_id: {cmc_id}")
+
     try:
-        # 1. 从数据库获取当前数据
+        # 1. 尝试从数据库获取数据
         market_data = await CmcMarketData.objects.select_related('asset').aget(asset__cmc_id=cmc_id)
         age = (timezone.now() - market_data.timestamp).total_seconds()
-        logger.info(f"Database market data for cmc_id {cmc_id} age: {age}s, threshold: {CMC_TTL_BASE}s")
-        
-        # 2. 如果数据过期，触发异步刷新但不等待完成
+
+        # 2. 如果数据过期，触发异步刷新
         if age > CMC_TTL_BASE:
-            logger.info(f"Market data for cmc_id {cmc_id} is stale (age: {age}s), initiating async refresh.")
-            # 将刷新任务添加到待处理队列
-            try:
-                service = await get_cmc_service()
-                # 异步启动刷新，但不等待结果 - 数据会被写入Redis然后由后台任务写入数据库
-                asyncio.create_task(service.get_token_market_data(cmc_id))
-                logger.info(f"Refresh task for cmc_id {cmc_id} initiated")
-            except Exception as e:
-                logger.error(f"Failed to initiate refresh for cmc_id {cmc_id}: {e}", exc_info=True)
-            
-        # 3. 返回当前可用的数据库数据
-        result = {
-            "price_usd": float(market_data.price_usd) if market_data.price_usd is not None else None,
-            "fully_diluted_market_cap": float(market_data.fully_diluted_market_cap) if market_data.fully_diluted_market_cap is not None else None,
-            "market_cap": float(market_data.market_cap) if market_data.market_cap is not None else None,
-            "volume_24h": float(market_data.volume_24h) if market_data.volume_24h is not None else None,
-            "volume_24h_token_count": float(market_data.volume_24h_token_count) if market_data.volume_24h_token_count is not None else None,
-            "circulating_supply": float(market_data.circulating_supply) if market_data.circulating_supply is not None else None,
-            "total_supply": float(market_data.total_supply) if market_data.total_supply is not None else None,
-            "cmc_rank": market_data.cmc_rank,
-            "timestamp": market_data.timestamp.isoformat(),
-        }
-        logger.info(f"Returning formatted market data for cmc_id: {cmc_id}")
-        return result
+            logger.info(f"Market data for cmc_id {cmc_id} is stale (age: {age}s), initiating async refresh")
+            service = await get_cmc_service()
+            asyncio.create_task(service.get_token_market_data(cmc_id))
+
+        # 3. 返回数据库数据
+        from apps.cmc_proxy.helpers import MarketDataFormatter
+        return MarketDataFormatter.format_market_data_from_db(market_data)
+
     except CmcMarketData.DoesNotExist:
-        logger.error(f"Market data for cmc_id {cmc_id} does not exist in database")
-        return None
+        # 4. 数据库没有数据，从CMC获取
+        logger.info(f"Market data for cmc_id {cmc_id} not found in database, fetching from CMC")
+        service = await get_cmc_service()
+        data = await service.get_token_market_data(cmc_id)
+
+        if data:
+            from apps.cmc_proxy.helpers import MarketDataFormatter
+            return MarketDataFormatter.format_market_data_from_api(data)
+        else:
+            return None
