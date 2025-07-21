@@ -10,7 +10,7 @@ from django.utils import timezone
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from apps.cmc_proxy.consts import CMC_N1, CMC_BATCH_PROCESSING_LOCK_KEY, CMC_BATCH_REQUESTS_PENDING_KEY, \
-    CMC_T1_MERGE_WINDOW_SECONDS, CMC_TTL_HOT, CMC_QUOTE_DATA_KEY, CMC_TTL_BASE
+    CMC_T1_MERGE_WINDOW_SECONDS, CMC_QUOTE_DATA_KEY, CMC_TTL_BASE
 from apps.cmc_proxy.helpers import KlineDataProcessor
 from apps.cmc_proxy.models import CmcAsset, CmcKline, CmcMarketData
 from apps.cmc_proxy.utils import CMCRedisClient
@@ -143,14 +143,24 @@ class CoinMarketCapService(metaclass=SingletonMeta):
                 await self._cmc_redis.ping()
             except Exception as e:
                 logger.warning(f"Redis connection appears to be broken, reinitializing: {e}")
-                if self._cmc_redis:
-                    try:
-                        await self._cmc_redis.aclose()
-                    except Exception:
-                        pass  # 忽略关闭错误
+                # 安全地关闭现有连接
+                await self._safe_close_redis()
                 self._cmc_redis = None
                 self._initialized = False
                 await self.async_init()
+
+    async def _safe_close_redis(self):
+        """安全地关闭Redis连接"""
+        if self._cmc_redis:
+            try:
+                # 尝试关闭连接池
+                if hasattr(self._cmc_redis, 'connection_pool') and self._cmc_redis.connection_pool:
+                    await self._cmc_redis.connection_pool.aclose()
+                # 关闭客户端
+                await self._cmc_redis.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing Redis connection (this is expected): {e}")
+                # 不需要重新抛出错误，这在连接已关闭时是正常的
 
     async def fetch_and_cache_top_n1_listings(self, target_symbol_id, ttl_hot):
         """
@@ -164,14 +174,21 @@ class CoinMarketCapService(metaclass=SingletonMeta):
             目标代币的数据（如果在热门列表中）
         """
         lock_acquired = False
+        lock_value = None
 
         try:
             await self._ensure_initialized()
 
-            # 尝试获取锁
-            lock_acquired = await acquire_lock(self.cmc_redis, CMC_BATCH_PROCESSING_LOCK_KEY, timeout=30)
+            # 尝试获取锁，增加重试次数
+            lock_acquired = await acquire_lock(
+                self.cmc_redis, 
+                CMC_BATCH_PROCESSING_LOCK_KEY, 
+                timeout=30, 
+                retry_count=5, 
+                retry_delay=0.5
+            )
             if not lock_acquired:
-                logger.warning("Failed to acquire lock for fetching top N1 listings")
+                logger.warning("Failed to acquire lock for fetching top N1 listings after retries")
                 return None
 
             response_data = await self.client.get_listings_latest()
@@ -236,6 +253,7 @@ class CoinMarketCapService(metaclass=SingletonMeta):
     async def get_token_market_data(self, symbol_id) -> Optional[Dict[str, Any]]:
         """
         获取代币市场数据，返回数据字典或 None。
+        优化后的逻辑：对于特定ID请求，直接使用批处理，避免不必要的listings API调用
         """
         try:
             await self._ensure_initialized()
@@ -246,19 +264,15 @@ class CoinMarketCapService(metaclass=SingletonMeta):
                 logger.info(f"Cache hit for {symbol_id} market data")
                 return cached_data
 
-            # 步骤2: 缓存未命中 - 获取热门列表
-            data_from_n1 = await self.fetch_and_cache_top_n1_listings(symbol_id, CMC_TTL_HOT)
-            if data_from_n1:
-                logger.info(f"Found {symbol_id} in top N1 listings")
-                return data_from_n1
-
-            # 步骤3: 仍未命中 - 启动批处理
+            # 步骤2: 缓存未命中 - 直接启动批处理
+            # 移除listings调用，让批处理任务自动从数据库获取热门ID补充到100个
+            logger.info(f"Cache miss for {symbol_id}, adding to batch processing queue")
             data_from_batch = await self.initiate_batch_request_processing(symbol_id)
             if data_from_batch:
                 logger.info(f"Got {symbol_id} from batch processing")
                 return data_from_batch
 
-            logger.info(f"No data found for {symbol_id} after all attempts")
+            logger.info(f"No data found for cmc_id {symbol_id} after batch processing. The asset may not exist in CMC's database or may be delisted.")
             return None
         except Exception as e:
             logger.error(f"Error getting market data for symbol_id {symbol_id}: {e}", exc_info=True)
@@ -449,13 +463,11 @@ class CoinMarketCapService(metaclass=SingletonMeta):
 
     async def close(self):
         """关闭所有资源连接"""
-        if self._cmc_redis:
-            try:
-                await self._cmc_redis.aclose()
-                self._cmc_redis = None
-            except Exception as e:
-                logger.error(f"Error closing Redis connection: {e}", exc_info=True)
+        # 关闭Redis连接
+        await self._safe_close_redis()
+        self._cmc_redis = None
 
+        # 关闭HTTP客户端
         if self._client:
             try:
                 await self._client.close()

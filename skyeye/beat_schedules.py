@@ -15,7 +15,7 @@ DEFAULT_BEAT_SCHEDULE = {
     },
     'sync_cmc_data_to_db': {
         'task': 'apps.cmc_proxy.tasks.sync_cmc_data_task',
-        'schedule': 1.0,  # 每1秒同步到数据库
+        'schedule': 300.0,  # 每5分钟同步到数据库
         'options': {'queue': 'celery'},
     },
     'hourly_cmc_klines_update': {
@@ -38,6 +38,16 @@ DEFAULT_BEAT_SCHEDULE = {
     'daily_token_allocations_update': {
         'task': 'apps.token_economics.tasks.update_token_allocations_task',
         'schedule': crontab(hour=6, minute=0),  # 每天凌晨6点分执行
+        'options': {'queue': 'celery'},
+    },
+    'collect_prices_frequently': {
+        'task': 'apps.price_oracle.tasks.collect_prices_task',
+        'schedule': 30.0,  # 每30秒采集一次价格数据
+        'options': {'queue': 'celery'},
+    },
+    'persist_prices_frequently': {
+        'task': 'apps.price_oracle.tasks.persist_prices_task',
+        'schedule': 15.0,  # 每15秒持久化一次
         'options': {'queue': 'celery'},
     },
 }

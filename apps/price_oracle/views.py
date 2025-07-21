@@ -22,6 +22,13 @@ def get_price(request):
             'price_change_24h': float(price_obj.price_change_24h) if price_obj.price_change_24h else None,
             'volume_24h': float(price_obj.volume_24h) if price_obj.volume_24h else None,
             'timestamp': price_obj.price_timestamp.isoformat(),
+            # 添加CMC资产信息
+            'cmc_info': {
+                'name': price_obj.cmc_asset.name if price_obj.cmc_asset else None,
+                'cmc_id': price_obj.cmc_asset.cmc_id if price_obj.cmc_asset else None,
+                'slug': price_obj.cmc_asset.slug if price_obj.cmc_asset else None,
+                'tags': price_obj.cmc_asset.tags if price_obj.cmc_asset else None,
+            } if price_obj.cmc_asset else None
         }
         return ok_json(data)
     except Exception as e:

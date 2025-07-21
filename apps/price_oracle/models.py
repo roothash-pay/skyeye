@@ -13,6 +13,16 @@ class AssetPrice(BaseModel):
     # 基础信息
     base_asset = models.CharField(max_length=20, unique=True, db_index=True, verbose_name='基础资产')  # BTC
     
+    # CMC关联
+    cmc_asset = models.ForeignKey(
+        'cmc_proxy.CmcAsset', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='asset_prices',
+        verbose_name='CMC资产关联'
+    )
+    
     # 最优价格信息
     symbol = models.CharField(max_length=50, db_index=True, verbose_name='最优交易对符号')  # BTC/USDT
     quote_asset = models.CharField(max_length=20, db_index=True, verbose_name='最优计价资产')  # USDT

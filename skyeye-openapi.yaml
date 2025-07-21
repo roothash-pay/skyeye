@@ -40,6 +40,21 @@ paths:
             type: integer
             default: 20
           description: "每页返回的项目数，默认为20"
+        - name: timeframe
+          in: query
+          schema:
+            type: string
+            default: "1h"
+            enum: ["1h"]
+          description: "K线时间间隔，默认为1h"
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            default: 24
+            minimum: 1
+            maximum: 744
+          description: "获取过去多少小时内的K线数据，默认为24小时。有效范围为1-744（即最多一个月），超出范围的值会被自动截断到744。"
       responses:
         "200":
           description: "成功"
@@ -518,6 +533,13 @@ paths:
             minimum: 1
             maximum: 744
           description: "获取过去多少小时内的数据，默认为24小时。有效范围为1-744（即最多一个月），超出范围的值会被自动截断到744。"
+        - name: timeframe
+          in: query
+          schema:
+            type: string
+            default: "1h"
+            enum: ["1h"]
+          description: "K线时间间隔，默认为1h"
       responses:
         "200":
           description: "成功"
@@ -642,7 +664,99 @@ paths:
                               volume: 24370240583.67
                               volume_token_count: 9051141.47121157
                           high_24h: 2796.8096097859193
-                          low_24h: 2658.6771446822954 
+                          low_24h: 2658.6771446822954
+  /api/v1/ccxt/price:
+    get:
+      summary: "【价格预言机】获取最优价格数据"
+      description: |
+        获取基于优先级算法计算的最优价格数据。该接口通过多交易所价格对比，
+        为指定交易对提供最准确的价格信息。
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+          description: "交易对符号，例如 BTC/USDT"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  code:
+                    type: integer
+                  result:
+                    type: object
+                    properties:
+                      base_asset:
+                        type: string
+                        description: "基础资产符号"
+                      exchange:
+                        type: string
+                        description: "最优价格来源交易所"
+                      price:
+                        type: number
+                        description: "最优价格"
+                      price_change_24h:
+                        type: number
+                        description: "24小时价格变化百分比"
+                      volume_24h:
+                        type: number
+                        description: "24小时交易量"
+                      timestamp:
+                        type: string
+                        format: date-time
+                        description: "价格更新时间"
+              examples:
+                价格预言机示例:
+                  summary: "获取BTC/USDT最优价格"
+                  value:
+                    ok: true
+                    code: 200
+                    result:
+                      base_asset: "BTC"
+                      exchange: "binance"
+                      price: 105778.90
+                      price_change_24h: 0.26
+                      volume_24h: 36792095698.90
+                      timestamp: "2025-06-21T10:30:00+00:00"
+        "400":
+          description: "请求参数错误"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: false
+                  code:
+                    type: integer
+                    example: 400
+                  message:
+                    type: string
+                    example: "symbol参数是必需的"
+        "404":
+          description: "未找到价格数据"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: false
+                  code:
+                    type: integer
+                    example: 404
+                  message:
+                    type: string
+                    example: "未找到该交易对的价格数据"
 components:
   schemas:
     Kline:
