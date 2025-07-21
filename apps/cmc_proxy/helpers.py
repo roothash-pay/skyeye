@@ -64,6 +64,7 @@ class MarketDataFormatter:
             "circulating_supply": MarketDataFormatter.safe_float(market_data.circulating_supply),
             "total_supply": MarketDataFormatter.safe_float(market_data.total_supply),
             "cmc_rank": market_data.cmc_rank,
+            "percent_change_24h": market_data.percent_change_24h,
             "timestamp": market_data.timestamp.isoformat(),
         }
 
@@ -80,6 +81,7 @@ class MarketDataFormatter:
             "circulating_supply": MarketDataFormatter.safe_float(data.get('circulating_supply')),
             "total_supply": MarketDataFormatter.safe_float(data.get('total_supply')),
             "cmc_rank": data.get('cmc_rank'),
+            "percent_change_24h": quote_usd.get('percent_change_24h'),
             "timestamp": data.get('last_updated', timezone.now().isoformat()),
         }
 

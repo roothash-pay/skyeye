@@ -9,6 +9,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.price_oracle.models import AssetPrice
+from apps.price_oracle.cmc_linking_service import CmcLinkingService
 from common.helpers import getLogger
 
 logger = getLogger(__name__)
@@ -41,6 +42,9 @@ class PriceService:
                 if not base_asset:
                     continue
 
+                # 查找CMC资产关联
+                cmc_asset = CmcLinkingService.get_cmc_asset_by_symbol(base_asset)
+                
                 record_data = {
                     'base_asset': base_asset,
                     'symbol': price_data.get('symbol', ''),
@@ -52,6 +56,7 @@ class PriceService:
                     'exchange_priority': price_data.get('exchange_priority', 999),
                     'quote_priority': price_data.get('quote_priority', 999),
                     'price_timestamp': timezone.now(),
+                    'cmc_asset': cmc_asset,  # 自动关联CMC资产
                 }
 
                 if base_asset in existing_assets:
@@ -124,11 +129,16 @@ class PriceService:
             if not deduplicated_prices:
                 return 0
 
-            # 创建记录对象
+            # 创建记录对象并关联CMC资产
             upsert_records = []
             for price_data in deduplicated_prices.values():
+                base_asset = price_data.get('base_asset', '').upper()
+                
+                # 查找CMC资产关联
+                cmc_asset = CmcLinkingService.get_cmc_asset_by_symbol(base_asset)
+                
                 record = AssetPrice(
-                    base_asset=price_data.get('base_asset', '').upper(),
+                    base_asset=base_asset,
                     symbol=price_data.get('symbol', ''),
                     quote_asset=price_data.get('quote_asset', ''),
                     exchange=price_data.get('exchange', ''),
@@ -138,6 +148,7 @@ class PriceService:
                     exchange_priority=price_data.get('exchange_priority', 999),
                     quote_priority=price_data.get('quote_priority', 999),
                     price_timestamp=timezone.now(),
+                    cmc_asset=cmc_asset,  # 自动关联CMC资产
                 )
                 upsert_records.append(record)
 
@@ -149,7 +160,7 @@ class PriceService:
                     update_fields=[
                         'symbol', 'quote_asset', 'exchange', 'price',
                         'price_change_24h', 'volume_24h', 'exchange_priority',
-                        'quote_priority', 'price_timestamp'
+                        'quote_priority', 'price_timestamp', 'cmc_asset'
                     ],
                     unique_fields=['base_asset'],
                     batch_size=2000

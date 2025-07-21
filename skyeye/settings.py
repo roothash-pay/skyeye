@@ -177,10 +177,20 @@ LOGGING = {
             'style': '{',
         },
     },
+    'filters': {
+        'ignore_broken_pipe': {
+            '()': 'django.utils.log.CallbackFilter',
+            'callback': lambda record: not (
+                hasattr(record, 'getMessage') and 
+                'Broken pipe' in record.getMessage()
+            )
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'filters': ['ignore_broken_pipe'],
         },
     },
     'loggers': {
@@ -188,6 +198,12 @@ LOGGING = {
             'handlers': ['console'],
             'level': env('DJANGO_LOG_LEVEL'),
             'propagate': True
+        },
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'WARNING',  # 减少服务器日志的详细程度
+            'propagate': False,
+            'filters': ['ignore_broken_pipe'],
         },
     },
     'root': {

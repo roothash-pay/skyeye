@@ -14,6 +14,44 @@ from common.helpers import getLogger
 logger = getLogger(__name__)
 
 
+async def _get_top_market_cap_ids_from_db(count: int, exclude_ids: list = None) -> list:
+    """
+    从数据库获取按市值排序的热门代币ID作为补充
+    
+    Args:
+        count: 需要获取的ID数量
+        exclude_ids: 需要排除的ID列表
+        
+    Returns:
+        热门代币ID列表（字符串格式）
+    """
+    if count <= 0:
+        return []
+    
+    try:
+        # 排除已有的ID
+        exclude_ids = exclude_ids or []
+        exclude_cmc_ids = [int(id_str) for id_str in exclude_ids if id_str.isdigit()]
+        
+        # 从数据库按市值降序获取热门代币ID
+        qs = CmcMarketData.objects.select_related('asset').filter(
+            market_cap__isnull=False,
+            market_cap__gt=0
+        ).exclude(
+            asset__cmc_id__in=exclude_cmc_ids
+        ).order_by('-market_cap')[:count]
+        
+        # 提取CMC ID并转换为字符串
+        hot_ids = [str(item.asset.cmc_id) async for item in qs]
+        
+        logger.info(f"Retrieved {len(hot_ids)} hot IDs from database (market cap based)")
+        return hot_ids
+        
+    except Exception as e:
+        logger.error(f"Error getting top market cap IDs from database: {e}", exc_info=True)
+        return []
+
+
 def _run_async_with_new_loop(coro):
     """创建新的事件循环并运行异步协程的辅助函数"""
     loop = None
@@ -75,18 +113,18 @@ async def _process_pending_cmc_batch_requests_with_lock(task_lock_key):
         unique_ids = list(set(pending_ids))
         logger.info(f"Got {len(unique_ids)} unique IDs from pending requests")
 
-        # 只有在有实际待处理请求时才从补充池获取补充，避免无限重复请求
+        # 只有在有实际待处理请求时才从数据库获取热门ID补充，避免无限重复请求
         if len(unique_ids) > 0 and len(unique_ids) < batch_size:
             supplement_count = batch_size - len(unique_ids)
-            supplement_ids = await cmc_redis.get_from_supplement_pool(supplement_count)
+            supplement_ids = await _get_top_market_cap_ids_from_db(supplement_count, exclude_ids=unique_ids)
 
-            # 确保不重复
+            # 确保不重复（双重保护）
             supplement_ids = [_id for _id in supplement_ids if _id not in unique_ids]
             unique_ids.extend(supplement_ids)
 
-            logger.info(f"Added {len(supplement_ids)} IDs from supplement pool")
+            logger.info(f"Added {len(supplement_ids)} IDs from database (top market cap)")
         elif len(unique_ids) == 0:
-            logger.info("No pending requests found, skipping supplement pool to avoid infinite requests")
+            logger.info("No pending requests found, skipping database supplement to avoid infinite requests")
 
         if not unique_ids:
             logger.info("No IDs to process in this batch")

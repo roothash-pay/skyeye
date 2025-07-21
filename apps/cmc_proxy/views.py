@@ -132,7 +132,11 @@ class CmcMarketDataView(View):
 
         market_data = await get_latest_market_data(cmc_id_int)
         if not market_data:
-            return error_json(f"未找到cmc_id为{cmc_id_int}的市场数据", code=404, status=404)
+            return error_json(
+                f"Market data not found for cmc_id {cmc_id_int}. This may be because the asset is not in our database or the data is temporarily unavailable.",
+                code=404, 
+                status=404
+            )
 
         try:
             asset = await CmcAsset.objects.aget(cmc_id=cmc_id_int)

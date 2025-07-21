@@ -148,4 +148,15 @@ def global_redis():
 
 
 def get_async_redis_client(redis_url: str):
-    return aioredis.from_url(redis_url, decode_responses=True)
+    """创建异步Redis客户端，处理连接池的生命周期管理"""
+    return aioredis.from_url(
+        redis_url, 
+        decode_responses=True,
+        # 设置连接池参数，避免事件循环关闭问题
+        max_connections=20,
+        retry_on_timeout=True,
+        socket_connect_timeout=5,
+        socket_keepalive=True,
+        socket_keepalive_options={},
+        health_check_interval=30
+    )

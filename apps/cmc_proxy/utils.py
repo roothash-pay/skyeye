@@ -94,21 +94,50 @@ class CMCRedisClient(aioredis.Redis):
             return []
 
 
-async def acquire_lock(redis_client, lock_key, timeout=30):
-    """获取Redis分布式锁"""
-    try:
-        lock_value = "1"  # 简单的锁值
-        success = await redis_client.set(lock_key, lock_value, ex=timeout, nx=True)
-        return bool(success)
-    except Exception as e:
-        logger.error(f"Error acquiring lock {lock_key}: {e}", exc_info=True)
-        return False
+async def acquire_lock(redis_client, lock_key, timeout=30, retry_count=3, retry_delay=1.0):
+    """获取Redis分布式锁，支持重试机制"""
+    import uuid
+    import asyncio
+    
+    lock_value = str(uuid.uuid4())  # 使用UUID作为锁值，避免误释放
+    
+    for attempt in range(retry_count):
+        try:
+            success = await redis_client.set(lock_key, lock_value, ex=timeout, nx=True)
+            if success:
+                logger.debug(f"Successfully acquired lock {lock_key} on attempt {attempt + 1}")
+                return True
+            
+            if attempt < retry_count - 1:
+                logger.debug(f"Failed to acquire lock {lock_key} on attempt {attempt + 1}, retrying in {retry_delay}s")
+                await asyncio.sleep(retry_delay)
+                
+        except Exception as e:
+            logger.error(f"Error acquiring lock {lock_key} on attempt {attempt + 1}: {e}", exc_info=True)
+            if attempt < retry_count - 1:
+                await asyncio.sleep(retry_delay)
+    
+    logger.warning(f"Failed to acquire lock {lock_key} after {retry_count} attempts")
+    return False
 
 
-async def release_lock(redis_client, lock_key):
-    """释放Redis分布式锁"""
+async def release_lock(redis_client, lock_key, lock_value=None):
+    """释放Redis分布式锁，支持锁值验证"""
     try:
-        return await redis_client.delete(lock_key)
+        if lock_value:
+            # 使用Lua脚本原子性地检查和删除锁
+            lua_script = """
+            if redis.call("get", KEYS[1]) == ARGV[1] then
+                return redis.call("del", KEYS[1])
+            else
+                return 0
+            end
+            """
+            result = await redis_client.eval(lua_script, 1, lock_key, lock_value)
+            return bool(result)
+        else:
+            # 简单删除（向后兼容）
+            return await redis_client.delete(lock_key)
     except Exception as e:
         logger.error(f"Error releasing lock {lock_key}: {e}", exc_info=True)
         return False

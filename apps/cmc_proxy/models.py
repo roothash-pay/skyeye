@@ -188,6 +188,13 @@ class CmcMarketData(BaseModel):
         db_table = 'cmc_market_data'
         verbose_name = "CMC 最新行情"
         verbose_name_plural = "CMC 最新行情"
+        indexes = [
+            models.Index(
+                fields=['-market_cap'],
+                name='cmc_mktdata_cap_desc_idx',
+                condition=models.Q(market_cap__isnull=False, market_cap__gt=0),
+            ),
+        ]
 
 
 class CmcKline(BaseModel):
