@@ -10,8 +10,8 @@ from django.utils import timezone
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from apps.cmc_proxy.consts import CMC_N1, CMC_BATCH_PROCESSING_LOCK_KEY, CMC_BATCH_REQUESTS_PENDING_KEY, \
-    CMC_T1_MERGE_WINDOW_SECONDS, CMC_QUOTE_DATA_KEY, CMC_TTL_BASE
-from apps.cmc_proxy.helpers import KlineDataProcessor
+    CMC_T1_MERGE_WINDOW_SECONDS, CMC_QUOTE_DATA_KEY, CMC_TTL_BASE, CMC_MARKET_DATA_TTL
+from apps.cmc_proxy.helpers import KlineDataProcessor, MarketDataFormatter
 from apps.cmc_proxy.models import CmcAsset, CmcKline, CmcMarketData
 from apps.cmc_proxy.utils import CMCRedisClient
 from apps.cmc_proxy.utils import acquire_lock, release_lock
@@ -533,24 +533,26 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
 
 async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
     """
-    获取单个代币的最新市场数据。
-    优先从数据库获取，数据不存在或过期时从CMC API获取。
+    获取单个代币的最新市场数据（混合数据源）。
+    - CMC数据：从数据库获取（10分钟缓存，节省credit）
+    - 价格数据：实时CCXT价格（无缓存，保证时效性）
     """
     logger.info(f"get_latest_market_data called for cmc_id: {cmc_id}")
 
     try:
-        # 1. 尝试从数据库获取数据
+        # 1. 获取CMC基础数据（可以缓存10分钟）
         market_data = await CmcMarketData.objects.select_related('asset').aget(asset__cmc_id=cmc_id)
         age = (timezone.now() - market_data.timestamp).total_seconds()
 
-        # 2. 如果数据过期，触发异步刷新
-        if age > CMC_TTL_BASE:
-            logger.info(f"Market data for cmc_id {cmc_id} is stale (age: {age}s), initiating async refresh")
+        # 2. 统一10分钟过期策略
+        # - 基础数据(市值、排名等): 10分钟过期
+        # - 价格数据回退: 10分钟过期（平衡成本与时效性）
+        if age > CMC_MARKET_DATA_TTL:  # 使用配置的市场数据TTL，平衡CMC credit消耗与数据新鲜度
+            logger.info(f"CMC market data for cmc_id {cmc_id} is stale (age: {age}s), initiating async refresh")
             service = await get_cmc_service()
             asyncio.create_task(service.get_token_market_data(cmc_id))
 
-        # 3. 返回数据库数据
-        from apps.cmc_proxy.helpers import MarketDataFormatter
+        # 3. 返回混合数据（CMC基础数据 + 实时CCXT价格）
         return MarketDataFormatter.format_market_data_from_db(market_data)
 
     except CmcMarketData.DoesNotExist:
@@ -560,7 +562,6 @@ async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
         data = await service.get_token_market_data(cmc_id)
 
         if data:
-            from apps.cmc_proxy.helpers import MarketDataFormatter
             return MarketDataFormatter.format_market_data_from_api(data)
         else:
             return None

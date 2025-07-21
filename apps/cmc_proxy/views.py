@@ -41,7 +41,7 @@ class CmcKlinesView(View):
         success, cmc_id_int = ViewParameterValidator.validate_and_parse_cmc_id(cmc_id)
         if not success:
             return error_json(cmc_id_int, code=400, status=400)
-        
+
         try:
             asset = await CmcAsset.objects.aget(cmc_id=cmc_id_int)
         except CmcAsset.DoesNotExist:
@@ -93,10 +93,15 @@ class CmcKlinesView(View):
             'results': results,
         })
 
+
 class CmcMarketDataView(View):
     """
     获取CMC最新行情数据的视图。
     支持单个查询、批量查询和分页列表。
+    
+    缓存策略：
+    - CMC基础数据：10分钟缓存（市值、排名等，节省credit）
+    - CCXT价格：实时获取（无缓存，保证时效性）
     """
 
     async def get(self, request):
@@ -134,7 +139,7 @@ class CmcMarketDataView(View):
         if not market_data:
             return error_json(
                 f"Market data not found for cmc_id {cmc_id_int}. This may be because the asset is not in our database or the data is temporarily unavailable.",
-                code=404, 
+                code=404,
                 status=404
             )
 
@@ -146,7 +151,7 @@ class CmcMarketDataView(View):
             # 资产不存在，等待短暂时间后重试一次（处理异步创建延迟）
             logger.info(f"Asset cmc_id={cmc_id_int} not found, waiting for async creation...")
             await asyncio.sleep(0.5)  # 等待500ms
-            
+
             try:
                 asset = await CmcAsset.objects.aget(cmc_id=cmc_id_int)
                 kline_data = await get_klines_for_asset(asset, **kline_params)
