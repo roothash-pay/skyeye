@@ -50,5 +50,6 @@ EXCHANGE_PRIORITY = [
     'phemex',
     'probit',
     'bigone',
-    'hitbtc'
+    'hitbtc',
+    'coinup',  # CoinUp - CP/USDT专用
 ]

@@ -188,18 +188,29 @@ class AdapterFactory:
     """适配器工厂"""
 
     # 支持所有 EXCHANGE_PRIORITY 中的交易所
-    ADAPTERS = {exch: (lambda exch=exch: CCXTAdapter(exch)) for exch in EXCHANGE_PRIORITY}
+    ADAPTERS = {exch: (lambda exch=exch: CCXTAdapter(exch)) for exch in EXCHANGE_PRIORITY if exch != 'coinup'}
 
     @classmethod
     def get_adapter(cls, exchange: str) -> Optional[ExchangeAdapter]:
         """获取交易所适配器"""
-        adapter_factory = cls.ADAPTERS.get(exchange.lower())
+        exchange_lower = exchange.lower()
+        
+        # 特殊处理CoinUp - 使用开源API适配器
+        if exchange_lower == 'coinup':
+            try:
+                from apps.price_oracle.coinup_adapter import CoinUpAdapter
+                return CoinUpAdapter()
+            except Exception as e:
+                logger.error(f"创建CoinUp适配器失败: {e}")
+                return None
+        
+        adapter_factory = cls.ADAPTERS.get(exchange_lower)
         if adapter_factory:
             return adapter_factory()
 
         # 如果没有找到具体的映射，尝试直接使用CCXTAdapter
         try:
-            return CCXTAdapter(exchange.lower())
+            return CCXTAdapter(exchange_lower)
         except Exception as e:
             logger.error(f"创建适配器失败 {exchange}: {e}")
             return None
@@ -207,7 +218,7 @@ class AdapterFactory:
     @classmethod
     def get_supported_exchanges(cls) -> List[str]:
         """获取支持的交易所列表"""
-        return list(cls.ADAPTERS.keys())
+        return list(cls.ADAPTERS.keys()) + ['coinup']
 
     @classmethod
     def get_priority_exchanges(cls) -> List[str]:
