@@ -10,6 +10,9 @@ CMC_N2_BATCH_TARGET_SIZE = 100  # 批量查询的目标代币数量
 CMC_N3_SUPPLEMENT_POOL_RANGE = 200  # "次热门补充池"的代币数量
 CMC_TTL_WARM_COLD = 600  # 获取的代币在Redis中的缓存时间（秒）
 CMC_TTL_BASE = 3600  # 每日全量更新的代币在Redis中的基础缓存时间（秒）
+CMC_MARKET_DATA_TTL = 600  # 市场数据缓存时间（秒） - 10分钟
+CMC_PRICE_FALLBACK_WARNING_THRESHOLD = 900  # CMC价格回退警告阈值（秒） - 15分钟
+CCXT_PRICE_STALE_THRESHOLD = 300  # CCXT价格过期阈值（秒） - 5分钟
 CMC_DAILY_FULL_SYNC_SCHEDULE = "0 3 * * *"  # 每日全量更新任务的执行时间（Cron格式）
 
 # CoinMarketCap Redis 键名模式
