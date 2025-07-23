@@ -40,8 +40,9 @@ get_worker_config() {
         cpu_cores="2"
     fi
     
-    WORKER_COUNT=$((cpu_cores > 2 ? cpu_cores : 2))
-    echo -e "${GREEN}[INFO]${NC} Using $WORKER_COUNT worker processes (CPU cores: $cpu_cores)"
+    # 限制最大并发数为2，避免资源过度消耗
+    WORKER_COUNT=2
+    echo -e "${GREEN}[INFO]${NC} Using $WORKER_COUNT worker processes (CPU cores: $cpu_cores, limited to 2 for stability)"
 }
 
 # --- Help Function ---
@@ -66,10 +67,30 @@ EOF
 # --- Worker Functions ---
 
 start_worker_bg() {
-    # First stop any existing workers
-    if pgrep -f "celery.*skyeye.*worker" > /dev/null; then
-        echo -e "${YELLOW}[WARNING]${NC} Existing worker detected, stopping first..."
-        stop_worker
+    # 强力清理所有现有的worker进程
+    echo -e "${YELLOW}[INFO]${NC} Cleaning up any existing worker processes..."
+    
+    # 使用更强力的清理方式
+    pkill -TERM -f "celery.*skyeye.*worker" 2>/dev/null || true
+    sleep 3
+    pkill -KILL -f "celery.*skyeye.*worker" 2>/dev/null || true
+    
+    # 清理PID文件
+    [[ -f "$CELERY_PID" ]] && rm -f "$CELERY_PID"
+    
+    # 等待确保所有进程都被清理
+    local count=0
+    while [[ $count -lt 10 ]] && pgrep -f "celery.*skyeye.*worker" > /dev/null; do
+        echo -e "${YELLOW}[INFO]${NC} Waiting for processes to terminate... ($count/10)"
+        sleep 1
+        ((count++))
+    done
+    
+    # 最终检查
+    local remaining=$(pgrep -f "celery.*skyeye.*worker" | wc -l)
+    if [[ $remaining -gt 0 ]]; then
+        echo -e "${RED}[WARNING]${NC} $remaining worker processes still running, forcing kill..."
+        pkill -KILL -f "celery.*skyeye.*worker" 2>/dev/null || true
         sleep 2
     fi
     
@@ -97,42 +118,32 @@ start_worker_bg() {
 stop_worker() {
     echo -e "${YELLOW}[INFO]${NC} Stopping Celery worker..."
     
-    # Try graceful shutdown first
-    if celery -A skyeye control shutdown 2>/dev/null; then
-        echo -e "${GREEN}[INFO]${NC} Graceful shutdown command sent"
-        
-        # Wait for graceful shutdown
-        local count=0
-        while [[ $count -lt 10 ]] && pgrep -f "celery.*skyeye.*worker" > /dev/null; do
-            sleep 1
-            ((count++))
-        done
-        
-        if ! pgrep -f "celery.*skyeye.*worker" > /dev/null; then
-            echo -e "${GREEN}[SUCCESS]${NC} Worker stopped gracefully"
-            [[ -f "$CELERY_PID" ]] && rm -f "$CELERY_PID"
-            return 0
-        fi
-    fi
+    # 直接使用强力清理，在容器环境中更可靠
+    echo -e "${YELLOW}[INFO]${NC} Force stopping all worker processes..."
     
-    # Force stop if graceful shutdown failed
-    echo -e "${YELLOW}[WARNING]${NC} Graceful shutdown timeout, forcing stop..."
-    if [[ -f "$CELERY_PID" ]]; then
-        local pid
-        pid=$(cat "$CELERY_PID" 2>/dev/null || echo "")
-        if [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null; then
-            echo -e "${GREEN}[INFO]${NC} Sent SIGTERM to PID $pid"
-            sleep 2
-        fi
-        rm -f "$CELERY_PID"
-    fi
+    # 清理PID文件
+    [[ -f "$CELERY_PID" ]] && rm -f "$CELERY_PID"
     
-    # Final cleanup - use pkill instead of killall for better compatibility
+    # 强力终止所有相关进程
     pkill -TERM -f "celery.*skyeye.*worker" 2>/dev/null || true
-    sleep 1
+    sleep 3
     pkill -KILL -f "celery.*skyeye.*worker" 2>/dev/null || true
     
-    echo -e "${GREEN}[SUCCESS]${NC} Worker stop completed"
+    # 等待进程完全终止
+    local count=0
+    while [[ $count -lt 5 ]] && pgrep -f "celery.*skyeye.*worker" > /dev/null; do
+        echo -e "${YELLOW}[INFO]${NC} Waiting for worker processes to terminate..."
+        sleep 1
+        ((count++))
+    done
+    
+    # 最终状态检查
+    local remaining=$(pgrep -f "celery.*skyeye.*worker" | wc -l)
+    if [[ $remaining -eq 0 ]]; then
+        echo -e "${GREEN}[SUCCESS]${NC} All worker processes stopped"
+    else
+        echo -e "${RED}[WARNING]${NC} $remaining worker processes may still be running"
+    fi
 }
 
 stop_beat() {
@@ -211,13 +222,22 @@ check_status() {
     local worker_running=false
     local beat_running=false
     
-    if pgrep -f "celery.*skyeye.*worker" > /dev/null; then
-        echo -e "${GREEN}[STATUS]${NC} Celery worker: RUNNING"
+    # 检查worker进程
+    local worker_count=$(pgrep -f "celery.*skyeye.*worker" | wc -l)
+    if [[ $worker_count -gt 0 ]]; then
+        echo -e "${GREEN}[STATUS]${NC} Celery worker: RUNNING ($worker_count processes)"
         worker_running=true
+        
+        # 如果进程数异常，给出警告
+        if [[ $worker_count -gt 3 ]]; then
+            echo -e "${RED}[WARNING]${NC} Too many worker processes detected! Expected: 3 (1 main + 2 workers), Found: $worker_count"
+            echo -e "${YELLOW}[SUGGESTION]${NC} Consider running: ./manage_celery_k3s.sh restart"
+        fi
     else
         echo -e "${RED}[STATUS]${NC} Celery worker: STOPPED"
     fi
     
+    # 检查beat进程
     if pgrep -f "celery.*skyeye.*beat" > /dev/null; then
         echo -e "${GREEN}[STATUS]${NC} Celery beat: RUNNING"
         beat_running=true
