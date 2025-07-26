@@ -15,10 +15,8 @@ env = environ.Env(
     POSTGRES_DB=(str, 'skyeye'),
     POSTGRES_USER=(str, 'skyeye_user'),
     POSTGRES_PASSWORD=(str, ''),
-    POSTGRES_HOST_MASTER=(str, '127.0.0.1'),
-    POSTGRES_PORT_MASTER=(str, '5430'),
-    POSTGRES_HOST_SLAVE=(str, '127.0.0.1'),
-    POSTGRES_PORT_SLAVE=(str, '5431'),
+    POSTGRES_HOST=(str, '127.0.0.1'),
+    POSTGRES_PORT=(str, '5430'),
     
     # Redis Settings
     REDIS_URL=(str, 'redis://localhost:6379/0'),
