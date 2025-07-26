@@ -119,30 +119,22 @@ TEMPLATES = [
 WSGI_APPLICATION = 'skyeye.wsgi.application'
 
 # Database configuration using environment variables
+# 简化数据库配置 - 移除伪主从架构，解决Beat调度器死锁问题
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': env('POSTGRES_DB'),
         'USER': env('POSTGRES_USER'),
         'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST_MASTER'),
-        'PORT': env('POSTGRES_PORT_MASTER'),
-    },
-    'slave_replica': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env('POSTGRES_DB'),
-        'USER': env('POSTGRES_USER'),
-        'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST_SLAVE'),
-        'PORT': env('POSTGRES_PORT_SLAVE'),
-        'TEST': {
-            'MIRROR': 'default',
+        'HOST': env('POSTGRES_HOST'),  # 使用统一的数据库主机
+        'PORT': env('POSTGRES_PORT'),
+        'OPTIONS': {
+            'connect_timeout': 10,
         },
     }
 }
 
-# Database Routers for Read-Write Splitting
-DATABASE_ROUTERS = ['skyeye.db_routers.ReadWriteRouter']
+# 移除数据库路由器 - 不再需要读写分离
 
 # Cache configuration using environment variables
 CACHES = {
