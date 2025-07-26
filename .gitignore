@@ -10,3 +10,4 @@ logs
 .claude
 .plans
 CLAUDE*.md
+*.sql
