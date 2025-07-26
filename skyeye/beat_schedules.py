@@ -24,6 +24,12 @@ DEFAULT_BEAT_SCHEDULE = {
         'options': {'queue': 'celery'},
         'kwargs': {'count': 1},  # 每次只更新1小时数据
     },
+    'daily_cmc_klines_initialization': {
+        'task': 'apps.cmc_proxy.tasks.initialize_missing_klines',
+        'schedule': crontab(hour=2, minute=30),  # 每天凌晨2:30执行，初始化缺失的K线数据
+        'options': {'queue': 'celery'},
+        'kwargs': {'count': 24, 'only_missing': True},  # 只处理缺失数据的资产
+    },
     'daily_token_holdings_update': {
         'task': 'apps.token_holdings.tasks.update_token_holdings_daily_task',
         'schedule': crontab(hour=4, minute=0),  # 每天凌晨4点执行
