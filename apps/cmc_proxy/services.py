@@ -487,7 +487,7 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
                                start_time_24h: datetime) -> Dict[str, Any]:
     """
     从数据库获取并处理单个资产的K线数据。
-    如果数据库没有数据，尝试从CMC API获取。
+    如果数据库没有数据，使用Redis缓存防止重复CMC API调用。
     """
     klines_qs = CmcKline.objects.filter(
         asset=asset,
@@ -498,11 +498,30 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
 
     klines = await KlineDataProcessor.serialize_klines_data(klines_qs)
 
-    # 如果数据库没有K线数据，尝试从CMC API获取
+    # 如果数据库没有K线数据，检查缓存防止重复API调用
     if not klines:
-        logger.info(f"No klines found for asset {asset.symbol} (cmc_id: {asset.cmc_id}), attempting to fetch from CMC")
+        cache_key = f"klines_fetch_lock:{asset.cmc_id}:{timeframe}"
+        
         try:
             service = await get_cmc_service()
+            
+            # 检查是否已有正在进行的API请求（防止重复调用）
+            existing_lock = await service.cmc_redis.get(cache_key)
+            if existing_lock:
+                logger.info(f"Klines fetch already in progress for {asset.symbol} (cmc_id: {asset.cmc_id}), skipping duplicate request")
+                # 返回空数据，避免重复API调用
+                high_24h, low_24h = KlineDataProcessor.calculate_high_low_24h([], start_time_24h)
+                return {
+                    'klines': [],
+                    'high_24h': high_24h,
+                    'low_24h': low_24h,
+                }
+            
+            # 设置锁，防止并发重复请求（5分钟过期）
+            await service.cmc_redis.set(cache_key, "fetching", ex=300)
+            
+            logger.info(f"No klines found for asset {asset.symbol} (cmc_id: {asset.cmc_id}), attempting to fetch from CMC")
+            
             # 获取24小时的历史数据用于初始化
             result = await service.fetch_and_store_klines_batch([asset.cmc_id], count=24, batch_size=1)
 
@@ -518,9 +537,18 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
                 klines = await KlineDataProcessor.serialize_klines_data(klines_qs)
             else:
                 logger.warning(f"Failed to fetch klines for {asset.symbol} from CMC API")
+            
+            # 清除锁
+            await service.cmc_redis.delete(cache_key)
 
         except Exception as e:
             logger.error(f"Error fetching klines for asset {asset.symbol}: {e}", exc_info=True)
+            # 出错时也要清除锁
+            try:
+                service = await get_cmc_service()
+                await service.cmc_redis.delete(cache_key)
+            except:
+                pass
 
     high_24h, low_24h = KlineDataProcessor.calculate_high_low_24h(klines, start_time_24h)
 
