@@ -437,6 +437,13 @@ def update_cmc_klines(self, count=1, only_missing=False):
 
 
 @shared_task(bind=True)
+def initialize_missing_klines(self, count=24, only_missing=True):
+    """初始化缺失的K线数据 (Celery任务) - 专门处理缺失数据"""
+    task_lock_key = "cmc:lock:initialize_missing_klines_task"
+    return _run_async_with_new_loop(_process_cmc_klines_with_lock(task_lock_key, count, only_missing))
+
+
+@shared_task(bind=True)
 def sync_cmc_data_task(self):
     """同步CMC数据到数据库 (Celery任务)"""
     return _run_async_with_new_loop(_sync_cmc_data_with_lock())

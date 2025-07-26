@@ -15,10 +15,8 @@ env = environ.Env(
     POSTGRES_DB=(str, 'skyeye'),
     POSTGRES_USER=(str, 'skyeye_user'),
     POSTGRES_PASSWORD=(str, ''),
-    POSTGRES_HOST_MASTER=(str, '127.0.0.1'),
-    POSTGRES_PORT_MASTER=(str, '5430'),
-    POSTGRES_HOST_SLAVE=(str, '127.0.0.1'),
-    POSTGRES_PORT_SLAVE=(str, '5431'),
+    POSTGRES_HOST=(str, '127.0.0.1'),
+    POSTGRES_PORT=(str, '5430'),
     
     # Redis Settings
     REDIS_URL=(str, 'redis://localhost:6379/0'),
@@ -119,30 +117,22 @@ TEMPLATES = [
 WSGI_APPLICATION = 'skyeye.wsgi.application'
 
 # Database configuration using environment variables
+# 简化数据库配置 - 移除伪主从架构，解决Beat调度器死锁问题
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': env('POSTGRES_DB'),
         'USER': env('POSTGRES_USER'),
         'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST_MASTER'),
-        'PORT': env('POSTGRES_PORT_MASTER'),
-    },
-    'slave_replica': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': env('POSTGRES_DB'),
-        'USER': env('POSTGRES_USER'),
-        'PASSWORD': env('POSTGRES_PASSWORD'),
-        'HOST': env('POSTGRES_HOST_SLAVE'),
-        'PORT': env('POSTGRES_PORT_SLAVE'),
-        'TEST': {
-            'MIRROR': 'default',
+        'HOST': env('POSTGRES_HOST'),  # 使用统一的数据库主机
+        'PORT': env('POSTGRES_PORT'),
+        'OPTIONS': {
+            'connect_timeout': 10,
         },
     }
 }
 
-# Database Routers for Read-Write Splitting
-DATABASE_ROUTERS = ['skyeye.db_routers.ReadWriteRouter']
+# 移除数据库路由器 - 不再需要读写分离
 
 # Cache configuration using environment variables
 CACHES = {

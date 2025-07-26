@@ -114,10 +114,38 @@ app.conf.update(
     task_queue_max_priority=10,
     task_default_priority=5,
 
-    # 时区配置：自动检测系统时区
-    timezone=detect_system_timezone(),
+    # 时区配置：优先使用环境变量，否则强制使用Asia/Shanghai
+    timezone=os.environ.get('CELERY_TIMEZONE', 'Asia/Shanghai'),
 
 )
 
 # 自动从所有已注册的Django app中加载tasks
 app.autodiscover_tasks()
+
+# 启动时验证时区配置
+@app.on_after_configure.connect
+def setup_periodic_tasks(sender, **kwargs):
+    """Celery启动后的配置验证"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # 记录时区配置信息
+    configured_timezone = sender.conf.timezone
+    env_timezone = os.environ.get('CELERY_TIMEZONE', 'Not Set')
+    
+    logger.info(f"🕐 Celery时区配置: {configured_timezone}")
+    logger.info(f"🌍 CELERY_TIMEZONE环境变量: {env_timezone}")
+    
+    if configured_timezone != 'Asia/Shanghai':
+        logger.warning(f"⚠️  时区配置可能不正确! 期望: Asia/Shanghai, 实际: {configured_timezone}")
+    
+    # 验证任务调度时间
+    try:
+        from django_celery_beat.models import PeriodicTask
+        daily_task = PeriodicTask.objects.filter(name='daily_full_data_sync').first()
+        if daily_task:
+            logger.info(f"📅 daily_full_data_sync任务调度: {daily_task.crontab}")
+    except Exception as e:
+        logger.debug(f"无法查询任务调度: {e}")
+    
+    logger.info("✅ Celery时区配置验证完成")

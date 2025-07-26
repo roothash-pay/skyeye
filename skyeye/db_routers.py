@@ -6,9 +6,15 @@ class ReadWriteRouter:
     def db_for_read(self, model, **hints):
         """
         Attempts to read from 'slave_replica'.
+        IMPORTANT: Celery Beat tables must use master to avoid scheduler deadlock.
         """
         if hints.get('instance') and hasattr(hints['instance'], '_state') and hints['instance']._state.db:
              return hints['instance']._state.db
+        
+        # Force Celery Beat tables to use master database to prevent scheduler deadlock
+        if model._meta.app_label == 'django_celery_beat':
+            return 'default'
+        
         return 'slave_replica'
 
     def db_for_write(self, model, **hints):
