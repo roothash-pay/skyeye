@@ -44,10 +44,19 @@ check_beat_health() {
         return 1
     fi
     
-    # 转换时间戳
-    local last_timestamp=$(date -d "$last_activity" +%s 2>/dev/null || echo "0")
+    # 修复时间解析：处理Celery日志的时间格式 "2025-07-27 16:33:33,493:"
+    # 移除毫秒和冒号，转换为标准格式
+    local cleaned_time=$(echo "$last_activity" | sed 's/,.*$//' | sed 's/:$//')
+    local last_timestamp=$(date -d "$cleaned_time" +%s 2>/dev/null)
     local current_timestamp=$(date +%s)
-    local idle_time=$((current_timestamp - last_timestamp))
+    
+    # 如果时间解析失败，使用当前时间（表示刚刚活跃）
+    if [[ -z "$last_timestamp" || "$last_timestamp" == "0" ]]; then
+        log "时间解析失败，假设Beat刚刚活跃"
+        local idle_time=0
+    else
+        local idle_time=$((current_timestamp - last_timestamp))
+    fi
     
     log "Beat最后活动: $last_activity (空闲时间: ${idle_time}秒)"
     
@@ -143,8 +152,7 @@ main() {
     log "🔄 重启脚本: $RESTART_SCRIPT"
     
     while true; do
-        # 使用API健康检查作为主要检测方式
-        if check_api_health; then
+        if check_beat_health && check_critical_tasks; then
             log "✅ Beat调度器运行正常"
         else
             send_alert "Beat调度器异常检测"
@@ -153,7 +161,7 @@ main() {
                 send_alert "Beat调度器已自动恢复"
             else
                 send_alert "Beat调度器自动恢复失败，需要人工介入"
-                # 继续监控，不退出
+                # 可以选择退出或继续监控
             fi
         fi
         
