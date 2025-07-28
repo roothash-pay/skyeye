@@ -49,14 +49,14 @@ class Command(BaseCommand):
         parser.add_argument(
             '--batch-size',
             type=int,
-            default=600,
-            help='Batch size for processing assets (default: 600, will be split into API batches of batch_size).'
+            default=100,
+            help='Batch size for processing assets (default: 100, will be split into API batches of batch_size).'
         )
         parser.add_argument(
             '--delay',
             type=float,
             default=2.0,
-            help='Delay between API calls in seconds (default: 2.0).'
+            help='Delay between API calls in seconds (default: 2.0, respects CMC rate limit of 30 calls/minute).'
         )
 
     def handle(self, *args, **options):

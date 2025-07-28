@@ -95,26 +95,59 @@ def beat_health(request):
         
         # 检查关键任务状态
         critical_tasks = [
+            # 高频价格任务（最关键）
             'collect_prices_frequently',
             'persist_prices_frequently',
-            'process_pending_cmc_batch_requests'
+            'process_pending_cmc_batch_requests',
+            
+            # 数据同步任务
+            'sync_cmc_data_to_db',
+            
+            # K线任务（容易出问题）
+            'hourly_cmc_klines_update',
+            'daily_cmc_klines_initialization',
+            
+            # 每日任务（重要的数据更新）
+            'daily_full_data_sync'
         ]
+        
+        # 不同任务的健康检查阈值（秒）
+        task_thresholds = {
+            # 高频任务
+            'collect_prices_frequently': 300,          # 30秒执行，5分钟内必须有
+            'persist_prices_frequently': 300,          # 15秒执行，5分钟内必须有
+            'process_pending_cmc_batch_requests': 300, # 2秒执行，5分钟内必须有
+            'sync_cmc_data_to_db': 900,               # 5分钟执行，15分钟内必须有
+            
+            # 小时任务
+            'hourly_cmc_klines_update': 7200,         # 每小时执行，2小时内必须有
+            'daily_cmc_klines_initialization': 86400 * 2,  # 每天执行，2天内必须有
+            
+            # 每日任务
+            'daily_full_data_sync': 86400 * 2,        # 每天执行，2天内必须有
+        }
         
         critical_status = {}
         for task_name in critical_tasks:
             try:
                 task = PeriodicTask.objects.get(name=task_name, enabled=True)
+                threshold = task_thresholds.get(task_name, 300)  # 默认5分钟
+                
                 if task.last_run_at:
                     time_since_run = (timezone.now() - task.last_run_at).total_seconds()
+                    status = 'ok' if time_since_run < threshold else 'warning'
+                    
                     critical_status[task_name] = {
                         'last_run': task.last_run_at.isoformat(),
                         'seconds_ago': int(time_since_run),
-                        'status': 'ok' if time_since_run < 300 else 'warning'  # 5分钟阈值
+                        'status': status,
+                        'threshold_seconds': threshold
                     }
                 else:
                     critical_status[task_name] = {
                         'last_run': None,
-                        'status': 'never_run'
+                        'status': 'never_run',
+                        'threshold_seconds': threshold
                     }
             except PeriodicTask.DoesNotExist:
                 critical_status[task_name] = {'status': 'not_found'}
