@@ -76,8 +76,20 @@ class CmcMarketDataManager(models.Manager):
                 'volume_24h_token_count': volume_24h_token_count,
             })
 
-        # 过滤掉None值，避免用None覆盖已有数据
-        defaults = {k: v for k, v in defaults.items() if v is not None}
+        # 过滤掉None值并验证数据精度
+        validated_defaults = {}
+        for k, v in defaults.items():
+            if v is not None:
+                # 对Decimal字段进行验证
+                if k in ['price_usd', 'market_cap', 'fully_diluted_market_cap', 'volume_24h', 
+                        'tvl', 'volume_24h_token_count', 'circulating_supply', 'total_supply']:
+                    validated_value = CmcKlineManager._validate_decimal_value(k, v, asset.symbol)
+                    if validated_value is not None:
+                        validated_defaults[k] = validated_value
+                else:
+                    validated_defaults[k] = v
+        
+        defaults = validated_defaults
 
         # 如果除了时间戳之外没有任何有效数据，可能就不需要更新
         if len(defaults) <= 1:
@@ -90,6 +102,66 @@ class CmcMarketDataManager(models.Manager):
 
 
 class CmcKlineManager(models.Manager):
+    
+    @staticmethod
+    def _validate_decimal_value(field_name, value, symbol=None):
+        """验证和调整数值以适应数据库字段限制"""
+        from decimal import Decimal, InvalidOperation
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # 转换为Decimal进行精确计算
+            if isinstance(value, (int, float)):
+                decimal_value = Decimal(str(value))
+            elif isinstance(value, str):
+                decimal_value = Decimal(value)
+            else:
+                decimal_value = Decimal(value)
+            
+            # 检查是否为无穷大或NaN
+            if not decimal_value.is_finite():
+                logger.warning(f"Invalid decimal value for {field_name} on {symbol}: {value}")
+                return None
+            
+            # 根据字段类型设置不同的限制
+            if field_name in ['open', 'high', 'low', 'close', 'price_usd']:
+                # 价格字段: max_digits=40, decimal_places=18
+                max_digits = 40
+                decimal_places = 18
+            elif field_name in ['volume', 'volume_token_count', 'market_cap', 'fully_diluted_market_cap', 
+                              'volume_24h', 'tvl', 'volume_24h_token_count', 'circulating_supply', 'total_supply']:
+                # 交易量/市值字段: max_digits=40, decimal_places=8  
+                max_digits = 40
+                decimal_places = 8
+            else:
+                # 默认设置
+                max_digits = 40
+                decimal_places = 18
+            
+            # 计算整数部分最大位数
+            max_integer_digits = max_digits - decimal_places
+            
+            # 检查整数部分是否超出限制
+            integer_part = abs(decimal_value).to_integral_value()
+            if len(str(integer_part)) > max_integer_digits:
+                logger.warning(
+                    f"Decimal value {value} for {field_name} on {symbol} exceeds max_digits limit. "
+                    f"Integer digits: {len(str(integer_part))}, Max allowed: {max_integer_digits}"
+                )
+                # 返回最大允许值
+                max_value = Decimal('9' * max_integer_digits + '.' + '9' * decimal_places)
+                return max_value if decimal_value > 0 else -max_value
+            
+            # 调整小数位数
+            adjusted_value = decimal_value.quantize(Decimal('0.' + '0' * decimal_places))
+            
+            return adjusted_value
+            
+        except (InvalidOperation, ValueError, OverflowError) as e:
+            logger.error(f"Error validating decimal value {value} for {field_name} on {symbol}: {e}")
+            return None
     async def update_or_create_from_api_data(self, asset, quote_data: dict, timeframe='1h'):
         time_open_str = quote_data.get('time_open')
         if not time_open_str:
@@ -121,8 +193,16 @@ class CmcKlineManager(models.Manager):
             'volume_token_count': volume_token_count,
         }
         
-        # 过滤掉None值
-        defaults = {k: v for k, v in defaults.items() if v is not None}
+        # 过滤掉None值并验证数据精度
+        validated_defaults = {}
+        for k, v in defaults.items():
+            if v is not None:
+                # 验证和调整数据精度
+                validated_value = CmcKlineManager._validate_decimal_value(k, v, asset.symbol)
+                if validated_value is not None:
+                    validated_defaults[k] = validated_value
+        
+        defaults = validated_defaults
         
         if not defaults:
             return None, False
@@ -205,7 +285,7 @@ class CmcKline(BaseModel):
     high = DecField(decimal_places=18, max_digits=40)
     low = DecField(decimal_places=18, max_digits=40)
     close = DecField(decimal_places=18, max_digits=40)
-    volume = DecField(decimal_places=8, max_digits=40)
+    volume = DecField(decimal_places=8, max_digits=40, null=True, blank=True)
     volume_token_count = DecField(decimal_places=8, max_digits=40, null=True)
     objects = CmcKlineManager()
 
