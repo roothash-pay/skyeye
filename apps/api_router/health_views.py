@@ -12,6 +12,131 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _check_data_freshness():
+    """
+    检查关键数据的新鲜度
+    验证任务是否真正更新了数据
+    """
+    freshness_status = {}
+    
+    try:
+        from django.utils import timezone
+        now = timezone.now()
+        
+        # 检查CMC市场数据新鲜度
+        try:
+            from apps.cmc_proxy.models import CmcMarketData
+            latest_market_data = CmcMarketData.objects.order_by('-updated_at').first()
+            if latest_market_data:
+                age_seconds = (now - latest_market_data.updated_at).total_seconds()
+                freshness_status['cmc_market_data'] = {
+                    'last_update': latest_market_data.updated_at.isoformat(),
+                    'age_seconds': int(age_seconds),
+                    'status': 'fresh' if age_seconds < 600 else 'stale'  # 10分钟阈值
+                }
+            else:
+                freshness_status['cmc_market_data'] = {'status': 'no_data'}
+        except Exception as e:
+            freshness_status['cmc_market_data'] = {'status': 'error', 'error': str(e)}
+        
+        # 检查价格 Oracle 数据新鲜度
+        try:
+            from apps.price_oracle.models import AssetPrice
+            latest_price = AssetPrice.objects.order_by('-price_timestamp').first()
+            if latest_price:
+                age_seconds = (now - latest_price.price_timestamp).total_seconds()
+                freshness_status['price_oracle'] = {
+                    'last_update': latest_price.price_timestamp.isoformat(),
+                    'age_seconds': int(age_seconds),
+                    'status': 'fresh' if age_seconds < 300 else 'stale'  # 5分钟阈值
+                }
+            else:
+                freshness_status['price_oracle'] = {'status': 'no_data'}
+        except Exception as e:
+            freshness_status['price_oracle'] = {'status': 'error', 'error': str(e)}
+        
+        # 检查K线数据新鲜度
+        try:
+            from apps.cmc_proxy.models import CmcKline
+            latest_kline = CmcKline.objects.filter(timeframe='1h').order_by('-timestamp').first()
+            if latest_kline:
+                age_seconds = (now - latest_kline.timestamp).total_seconds()
+                freshness_status['kline_data'] = {
+                    'last_update': latest_kline.timestamp.isoformat(),
+                    'age_seconds': int(age_seconds),
+                    'status': 'fresh' if age_seconds < 7200 else 'stale'  # 2小时阈值
+                }
+            else:
+                freshness_status['kline_data'] = {'status': 'no_data'}
+        except Exception as e:
+            freshness_status['kline_data'] = {'status': 'error', 'error': str(e)}
+            
+    except Exception as e:
+        freshness_status['error'] = str(e)
+    
+    return freshness_status
+
+def _get_task_execution_stats():
+    """
+    获取任务执行统计信息
+    包括成功率、失败次数等
+    """
+    try:
+        from celery import current_app
+        
+        # 获取Celery的inspect对象
+        inspect = current_app.control.inspect()
+        
+        # 获取活跃任务
+        active_tasks = inspect.active() or {}
+        active_task_count = sum(len(tasks) for tasks in active_tasks.values())
+        
+        # 获取保留任务
+        reserved_tasks = inspect.reserved() or {}
+        reserved_task_count = sum(len(tasks) for tasks in reserved_tasks.values())
+        
+        # 获取worker统计
+        stats = inspect.stats() or {}
+        worker_count = len(stats)
+        
+        # 检查队列积压
+        queue_lengths = _get_queue_lengths()
+        
+        return {
+            'active_tasks': active_task_count,
+            'reserved_tasks': reserved_task_count,
+            'worker_count': worker_count,
+            'queue_lengths': queue_lengths,
+            'workers': list(stats.keys()) if stats else []
+        }
+        
+    except Exception as e:
+        return {'error': str(e)}
+
+def _get_queue_lengths():
+    """
+    获取各个队列的积压情况
+    """
+    try:
+        import redis
+        redis_client = redis.from_url(settings.CELERY_BROKER_URL)
+        
+        # 定义需要检查的队列
+        queues = ['celery', 'price', 'sync', 'klines', 'heavy']
+        queue_lengths = {}
+        
+        for queue in queues:
+            try:
+                length = redis_client.llen(queue)
+                queue_lengths[queue] = length
+            except Exception as e:
+                queue_lengths[queue] = f'error: {str(e)}'
+        
+        return queue_lengths
+        
+    except Exception as e:
+        return {'error': str(e)}
+
 @require_http_methods(["GET"])
 def health_check(request):
     """
@@ -79,7 +204,7 @@ def ping(request):
 def beat_health(request):
     """
     Beat调度器健康检查
-    专门用于监控Beat调度器状态
+    专门用于监控Beat调度器状态和任务执行结果
     """
     try:
         # 检查最近是否有任务被调度
@@ -160,13 +285,29 @@ def beat_health(request):
         if warning_count > 0:
             overall_status = 'warning' if warning_count <= 1 else 'unhealthy'
         
+        # 添加数据更新验证
+        data_freshness = _check_data_freshness()
+        
+        # 添加任务执行统计
+        task_execution_stats = _get_task_execution_stats()
+        
         response_data = {
             'status': overall_status,
             'timestamp': datetime.now().isoformat(),
             'recent_active_tasks': active_tasks,
-            'critical_tasks': critical_status
+            'critical_tasks': critical_status,
+            'data_freshness': data_freshness,
+            'execution_stats': task_execution_stats
         }
         
+        # 根据数据新鲜度调整整体状态
+        if overall_status == 'healthy':
+            stale_data_count = sum(1 for status in data_freshness.values() 
+                                 if isinstance(status, dict) and status.get('status') == 'stale')
+            if stale_data_count > 0:
+                overall_status = 'warning'
+        
+        response_data['status'] = overall_status
         status_code = 200 if overall_status == 'healthy' else 503
         return JsonResponse(response_data, status=status_code)
         

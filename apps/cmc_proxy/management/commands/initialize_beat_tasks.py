@@ -3,6 +3,7 @@ from celery.schedules import crontab
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django_celery_beat.models import PeriodicTask, IntervalSchedule, CrontabSchedule
+import pytz
 
 from skyeye.beat_schedules import DEFAULT_BEAT_SCHEDULE
 
@@ -53,14 +54,15 @@ class Command(BaseCommand):
                 interval_schedule = None
                 
                 if isinstance(schedule, crontab):
-                    # Cron调度
+                    # Cron调度 - 强制使用Shanghai时区
+                    shanghai_tz = pytz.timezone('Asia/Shanghai')
                     crontab_schedule, _ = CrontabSchedule.objects.get_or_create(
                         minute=self._convert_cron_field(schedule._orig_minute),
                         hour=self._convert_cron_field(schedule._orig_hour),
                         day_of_week=self._convert_cron_field(schedule._orig_day_of_week),
                         day_of_month=self._convert_cron_field(schedule._orig_day_of_month),
                         month_of_year=self._convert_cron_field(schedule._orig_month_of_year),
-                        timezone=timezone.get_current_timezone()
+                        timezone=shanghai_tz
                     )
                 elif isinstance(schedule, (int, float)):
                     # 间隔调度(秒)

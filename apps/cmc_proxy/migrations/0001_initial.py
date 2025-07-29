@@ -68,6 +68,7 @@ class Migration(migrations.Migration):
                 'verbose_name': 'CMC 最新行情',
                 'verbose_name_plural': 'CMC 最新行情',
                 'db_table': 'cmc_market_data',
+                'indexes': [models.Index(condition=models.Q(('market_cap__gt', 0), ('market_cap__isnull', False)), fields=['-market_cap'], name='cmc_mktdata_cap_desc_idx')],
             },
         ),
         migrations.CreateModel(
@@ -82,7 +83,7 @@ class Migration(migrations.Migration):
                 ('high', common.model_fields.DecField(decimal_places=18, max_digits=40)),
                 ('low', common.model_fields.DecField(decimal_places=18, max_digits=40)),
                 ('close', common.model_fields.DecField(decimal_places=18, max_digits=40)),
-                ('volume', common.model_fields.DecField(decimal_places=8, max_digits=40)),
+                ('volume', common.model_fields.DecField(blank=True, decimal_places=8, max_digits=40, null=True)),
                 ('volume_token_count', common.model_fields.DecField(decimal_places=8, max_digits=40, null=True)),
                 ('asset', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='klines', to='cmc_proxy.cmcasset')),
             ],
