@@ -200,6 +200,49 @@ def ping(request):
         'service': 'skyeye-api'
     })
 
+def _check_cmc_keys_health():
+    """检查CMC API Keys的配置状态"""
+    cmc_keys_status = {}
+    
+    try:
+        # 检查K线任务专用Key
+        klines_key = getattr(settings, 'COINMARKETCAP_API_KEY', None)
+        cmc_keys_status['klines_key'] = {
+            'configured': bool(klines_key),
+            'purpose': '系统维护任务专用 (K线、全量同步)',
+            'length': len(klines_key) if klines_key else 0
+        }
+        
+        # 检查外部请求专用Key  
+        external_key = getattr(settings, 'COINMARKETCAP_API_KEY_EXTERNAL', None)
+        cmc_keys_status['external_key'] = {
+            'configured': bool(external_key),
+            'purpose': '外部用户请求专用',
+            'length': len(external_key) if external_key else 0
+        }
+        
+        # 检查是否两个Key都配置了
+        both_configured = bool(klines_key and external_key)
+        cmc_keys_status['separation_enabled'] = both_configured
+        
+        if both_configured:
+            cmc_keys_status['status'] = 'separated'
+            cmc_keys_status['message'] = '双Key分离已启用，API调用能力翻倍'
+        elif klines_key:
+            cmc_keys_status['status'] = 'single_key'
+            cmc_keys_status['message'] = '仅配置了K线Key，建议配置外部Key实现分离'
+        else:
+            cmc_keys_status['status'] = 'no_keys'
+            cmc_keys_status['message'] = '未配置任何CMC API Key'
+            
+    except Exception as e:
+        cmc_keys_status = {
+            'status': 'error',
+            'error': str(e)
+        }
+    
+    return cmc_keys_status
+
 @require_http_methods(["GET"])
 def beat_health(request):
     """
@@ -291,13 +334,17 @@ def beat_health(request):
         # 添加任务执行统计
         task_execution_stats = _get_task_execution_stats()
         
+        # 添加CMC Keys状态检查
+        cmc_keys_status = _check_cmc_keys_health()
+        
         response_data = {
             'status': overall_status,
             'timestamp': datetime.now().isoformat(),
             'recent_active_tasks': active_tasks,
             'critical_tasks': critical_status,
             'data_freshness': data_freshness,
-            'execution_stats': task_execution_stats
+            'execution_stats': task_execution_stats,
+            'cmc_keys': cmc_keys_status
         }
         
         # 根据数据新鲜度调整整体状态

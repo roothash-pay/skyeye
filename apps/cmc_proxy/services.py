@@ -24,20 +24,29 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 class CoinMarketCapClient:
     BASE_URL = "https://pro-api.coinmarketcap.com"
 
-    def __init__(self, timeout=20):
-        self.api_key = settings.COINMARKETCAP_API_KEY
+    def __init__(self, timeout=20, client_type="klines"):
+        # 根据客户端类型选择不同的API Key
+        if client_type == "external":
+            self.api_key = settings.COINMARKETCAP_API_KEY_EXTERNAL
+            key_name = "COINMARKETCAP_API_KEY_EXTERNAL"
+        else:
+            self.api_key = settings.COINMARKETCAP_API_KEY
+            key_name = "COINMARKETCAP_API_KEY"
+            
         if not self.api_key:
-            logger.error("COINMARKETCAP_API_KEY is not configured in Django settings.")
-            raise ValueError("COINMARKETCAP_API_KEY is not configured.")
+            logger.error(f"{key_name} is not configured in Django settings.")
+            raise ValueError(f"{key_name} is not configured.")
+            
         self.headers = {
             'X-CMC_PRO_API_KEY': self.api_key,
             'Accept': 'application/json'
         }
         self.timeout = timeout
+        self.client_type = client_type  # 用于日志标识
         self._http_client = httpx.AsyncClient(timeout=self.timeout)
 
     async def _make_api_request(self, endpoint, params):
-        logger.info(f"Calling CoinMarketCap API (async): {endpoint} with params: {params}")
+        logger.info(f"Calling CMC API ({self.client_type}): {endpoint} with params: {params}")
         response = await self._http_client.get(endpoint, headers=self.headers, params=params)
         response.raise_for_status()
         # data = await to_thread(response.json)  # JSON数据量很大的时候使用
@@ -95,10 +104,11 @@ class SingletonMeta(type):
 
 
 class CoinMarketCapService(metaclass=SingletonMeta):
-    def __init__(self, redis_url=None):
-        logger.info("Initializing CoinMarketCapService")
+    def __init__(self, redis_url=None, client_type="klines"):
+        logger.info(f"Initializing CoinMarketCapService with client_type: {client_type}")
         self.redis_url = redis_url or settings.REDIS_CMC_URL
         self._client = None
+        self._client_type = client_type
         self._cmc_redis = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
@@ -107,7 +117,7 @@ class CoinMarketCapService(metaclass=SingletonMeta):
     def client(self):
         """懒加载API客户端"""
         if self._client is None:
-            self._client = CoinMarketCapClient()
+            self._client = CoinMarketCapClient(client_type=self._client_type)
         return self._client
 
     @property
@@ -478,9 +488,21 @@ class CoinMarketCapService(metaclass=SingletonMeta):
         self._initialized = False
 
 
-async def get_cmc_service() -> CoinMarketCapService:
-    """获取CoinMarketCapService的单例实例"""
-    return await CoinMarketCapService()
+async def get_cmc_service(client_type="klines") -> CoinMarketCapService:
+    """获取指定类型的CoinMarketCapService实例"""
+    # 为了避免单例冲突，不同client_type使用不同的key
+    service_key = f"cmc_service_{client_type}"
+    
+    # 由于SingletonMeta的限制，我们需要创建不同的实例
+    if client_type == "external":
+        # 外部请求使用独立的实例，避免与klines实例冲突
+        service = CoinMarketCapService.__new__(CoinMarketCapService)
+        service.__init__(client_type="external")
+        await service.async_init()
+        return service
+    else:
+        # K线任务使用默认的单例模式
+        return await CoinMarketCapService(client_type="klines")
 
 
 async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: datetime, end_time: datetime,
@@ -577,7 +599,8 @@ async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
         # - 价格数据回退: 10分钟过期（平衡成本与时效性）
         if age > CMC_MARKET_DATA_TTL:  # 使用配置的市场数据TTL，平衡CMC credit消耗与数据新鲜度
             logger.info(f"CMC market data for cmc_id {cmc_id} is stale (age: {age}s), initiating async refresh")
-            service = await get_cmc_service()
+            # 外部请求使用专用Key
+            service = await get_cmc_service(client_type="external")
             asyncio.create_task(service.get_token_market_data(cmc_id))
 
         # 3. 返回混合数据（CMC基础数据 + 实时CCXT价格）
@@ -586,7 +609,8 @@ async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
     except CmcMarketData.DoesNotExist:
         # 4. 数据库没有数据，从CMC获取
         logger.info(f"Market data for cmc_id {cmc_id} not found in database, fetching from CMC")
-        service = await get_cmc_service()
+        # 外部请求使用专用Key
+        service = await get_cmc_service(client_type="external")
         data = await service.get_token_market_data(cmc_id)
 
         if data:
