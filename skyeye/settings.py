@@ -32,6 +32,7 @@ env = environ.Env(
     
     # External API Settings
     COINMARKETCAP_API_KEY=(str, ''),
+    COINMARKETCAP_API_KEY_EXTERNAL=(str, ''),
     COINMARKETCAP_BASE_URL=(str, 'https://pro-api.coinmarketcap.com/v1'),
     FRANKFURTER_API_URL=(str, 'https://api.frankfurter.app/latest?from=USD&to=CNY'),
     
@@ -228,7 +229,8 @@ USE_TZ = True  # 开启后，django.utils.timezone.now()得到的是UTC时间，
 STATIC_URL = '/static/'
 
 # External API Configurations (using env defaults)
-COINMARKETCAP_API_KEY = env('COINMARKETCAP_API_KEY')
+COINMARKETCAP_API_KEY = env('COINMARKETCAP_API_KEY')  # K线任务和系统维护专用
+COINMARKETCAP_API_KEY_EXTERNAL = env('COINMARKETCAP_API_KEY_EXTERNAL')  # 外部用户请求专用
 COINMARKETCAP_BASE_URL = env('COINMARKETCAP_BASE_URL')
 FRANKFURTER_API_URL = env('FRANKFURTER_API_URL')
 DEFAULT_USD_CNY_RATE = env('DEFAULT_USD_CNY_RATE')

@@ -200,6 +200,66 @@ def ping(request):
         'service': 'skyeye-api'
     })
 
+def _is_valid_cmc_key(api_key: str) -> bool:
+    """验证CMC API Key格式"""
+    if not api_key or len(api_key) < 30:
+        return False
+    # 基本格式检查，避免明显错误的配置
+    return api_key.replace('-', '').replace('_', '').isalnum()
+
+def _check_cmc_keys_health():
+    """检查CMC API Keys的配置状态"""
+    cmc_keys_status = {}
+    
+    try:
+        # 检查K线任务专用Key
+        klines_key = getattr(settings, 'COINMARKETCAP_API_KEY', None)
+        cmc_keys_status['klines_key'] = {
+            'configured': bool(klines_key),
+            'purpose': '系统维护任务专用 (K线、全量同步)',
+            'valid_format': _is_valid_cmc_key(klines_key) if klines_key else False
+        }
+        
+        # 检查外部请求专用Key  
+        external_key = getattr(settings, 'COINMARKETCAP_API_KEY_EXTERNAL', None)
+        cmc_keys_status['external_key'] = {
+            'configured': bool(external_key),
+            'purpose': '外部用户请求专用',
+            'valid_format': _is_valid_cmc_key(external_key) if external_key else False
+        }
+        
+        # 检查是否两个Key都配置了
+        both_configured = bool(klines_key and external_key)
+        cmc_keys_status['separation_enabled'] = both_configured
+        
+        if both_configured:
+            # 检查两个Key是否相同（配置错误）
+            if klines_key == external_key:
+                cmc_keys_status['status'] = 'duplicate_keys'
+                cmc_keys_status['message'] = '警告：两个Key相同，未实现真正分离'
+                cmc_keys_status['warning'] = True
+            else:
+                cmc_keys_status['status'] = 'separated'
+                cmc_keys_status['message'] = '双Key分离已启用，API调用能力翻倍'
+                cmc_keys_status['warning'] = False
+        elif klines_key:
+            cmc_keys_status['status'] = 'single_key'
+            cmc_keys_status['message'] = '仅配置了K线Key，外部请求将使用降级模式'
+            cmc_keys_status['warning'] = True
+        else:
+            cmc_keys_status['status'] = 'no_keys'
+            cmc_keys_status['message'] = '未配置任何CMC API Key'
+            cmc_keys_status['warning'] = True
+            
+    except Exception as e:
+        cmc_keys_status = {
+            'status': 'error',
+            'error': str(e),
+            'warning': True
+        }
+    
+    return cmc_keys_status
+
 @require_http_methods(["GET"])
 def beat_health(request):
     """
@@ -291,20 +351,28 @@ def beat_health(request):
         # 添加任务执行统计
         task_execution_stats = _get_task_execution_stats()
         
+        # 添加CMC Keys状态检查
+        cmc_keys_status = _check_cmc_keys_health()
+        
         response_data = {
             'status': overall_status,
             'timestamp': datetime.now().isoformat(),
             'recent_active_tasks': active_tasks,
             'critical_tasks': critical_status,
             'data_freshness': data_freshness,
-            'execution_stats': task_execution_stats
+            'execution_stats': task_execution_stats,
+            'cmc_keys': cmc_keys_status
         }
         
-        # 根据数据新鲜度调整整体状态
+        # 根据数据新鲜度和CMC Keys状态调整整体状态
         if overall_status == 'healthy':
             stale_data_count = sum(1 for status in data_freshness.values() 
                                  if isinstance(status, dict) and status.get('status') == 'stale')
-            if stale_data_count > 0:
+            
+            # 检查CMC Keys是否有警告
+            cmc_keys_warning = cmc_keys_status.get('warning', False)
+            
+            if stale_data_count > 0 or cmc_keys_warning:
                 overall_status = 'warning'
         
         response_data['status'] = overall_status

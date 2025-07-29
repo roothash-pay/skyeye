@@ -130,7 +130,8 @@ async def _process_pending_cmc_batch_requests_with_lock(task_lock_key):
             logger.info("No IDs to process in this batch")
             return
 
-        client = CoinMarketCapClient()
+        # 这个任务服务外部用户请求，使用外部专用Key
+        client = CoinMarketCapClient(client_type="external")
         try:
             response_data = await client.get_quotes_latest(ids=unique_ids)
             quotes_data = response_data.get('data', {})
@@ -206,7 +207,8 @@ async def _daily_full_data_sync_implementation(cmc_redis):
     except PeriodicTask.DoesNotExist:
         logger.warning("Batch request task not found, continuing without disabling")
 
-    client = CoinMarketCapClient()
+    # 系统维护任务，使用K线任务专用Key
+    client = CoinMarketCapClient(client_type="klines")
     try:
         page_size = 5000
         start = 1
@@ -281,7 +283,8 @@ async def _process_cmc_klines(count: int, only_missing: bool):
     mode = "initialization" if only_missing else "incremental update"
     logger.info(f"Starting CMC klines {mode} task")
     try:
-        cmc_service = await get_cmc_service()
+        # K线任务使用专用Key
+        cmc_service = await get_cmc_service(client_type="klines")
         # 如果是增量模式且尚未初始化任何 K 线，则首 run 自动初始化 24 小时历史数据
         if not only_missing:
             total = await CmcKline.objects.acount()

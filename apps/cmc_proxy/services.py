@@ -24,20 +24,49 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 class CoinMarketCapClient:
     BASE_URL = "https://pro-api.coinmarketcap.com"
 
-    def __init__(self, timeout=20):
-        self.api_key = settings.COINMARKETCAP_API_KEY
+    def __init__(self, timeout=20, client_type="klines"):
+        # 根据客户端类型选择不同的API Key
+        if client_type == "external":
+            self.api_key = getattr(settings, 'COINMARKETCAP_API_KEY_EXTERNAL', None)
+            key_name = "COINMARKETCAP_API_KEY_EXTERNAL"
+            # 如果外部Key未配置，降级使用默认Key
+            if not self.api_key:
+                logger.warning("External CMC key not configured, falling back to default key")
+                self.api_key = settings.COINMARKETCAP_API_KEY
+                key_name = "COINMARKETCAP_API_KEY (fallback)"
+                self.client_type = "fallback"
+            else:
+                self.client_type = client_type
+        else:
+            self.api_key = settings.COINMARKETCAP_API_KEY
+            key_name = "COINMARKETCAP_API_KEY"
+            self.client_type = client_type
+            
+        # 验证API Key格式
         if not self.api_key:
-            logger.error("COINMARKETCAP_API_KEY is not configured in Django settings.")
-            raise ValueError("COINMARKETCAP_API_KEY is not configured.")
+            logger.error(f"{key_name} is not configured in Django settings.")
+            raise ValueError(f"{key_name} is not configured.")
+        
+        if not self._is_valid_api_key(self.api_key):
+            logger.error(f"Invalid {key_name} format")
+            raise ValueError(f"Invalid {key_name} format")
+            
         self.headers = {
             'X-CMC_PRO_API_KEY': self.api_key,
             'Accept': 'application/json'
         }
         self.timeout = timeout
         self._http_client = httpx.AsyncClient(timeout=self.timeout)
+        
+    def _is_valid_api_key(self, api_key: str) -> bool:
+        """验证API Key格式（CMC API Key通常是UUID格式）"""
+        if not api_key or len(api_key) < 30:  # CMC API Key通常较长
+            return False
+        # 基本格式检查，避免明显错误的配置
+        return api_key.replace('-', '').replace('_', '').isalnum()
 
     async def _make_api_request(self, endpoint, params):
-        logger.info(f"Calling CoinMarketCap API (async): {endpoint} with params: {params}")
+        logger.info(f"Calling CMC API ({self.client_type}): {endpoint} with params: {params}")
         response = await self._http_client.get(endpoint, headers=self.headers, params=params)
         response.raise_for_status()
         # data = await to_thread(response.json)  # JSON数据量很大的时候使用
@@ -94,11 +123,12 @@ class SingletonMeta(type):
         return cls._instances[cls]
 
 
-class CoinMarketCapService(metaclass=SingletonMeta):
-    def __init__(self, redis_url=None):
-        logger.info("Initializing CoinMarketCapService")
+class CoinMarketCapService:
+    def __init__(self, redis_url=None, client_type="klines"):
+        logger.info(f"Initializing CoinMarketCapService with client_type: {client_type}")
         self.redis_url = redis_url or settings.REDIS_CMC_URL
         self._client = None
+        self._client_type = client_type
         self._cmc_redis = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
@@ -107,7 +137,7 @@ class CoinMarketCapService(metaclass=SingletonMeta):
     def client(self):
         """懒加载API客户端"""
         if self._client is None:
-            self._client = CoinMarketCapClient()
+            self._client = CoinMarketCapClient(client_type=self._client_type)
         return self._client
 
     @property
@@ -478,9 +508,19 @@ class CoinMarketCapService(metaclass=SingletonMeta):
         self._initialized = False
 
 
-async def get_cmc_service() -> CoinMarketCapService:
-    """获取CoinMarketCapService的单例实例"""
-    return await CoinMarketCapService()
+# 服务实例缓存
+_service_instances = {}
+_service_lock = asyncio.Lock()
+
+async def get_cmc_service(client_type="klines") -> CoinMarketCapService:
+    """获取指定类型的CoinMarketCapService实例，使用实例缓存避免重复创建"""
+    async with _service_lock:
+        if client_type not in _service_instances:
+            logger.info(f"Creating new CoinMarketCapService instance for {client_type}")
+            service = CoinMarketCapService(client_type=client_type)
+            await service.async_init()
+            _service_instances[client_type] = service
+        return _service_instances[client_type]
 
 
 async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: datetime, end_time: datetime,
@@ -577,7 +617,8 @@ async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
         # - 价格数据回退: 10分钟过期（平衡成本与时效性）
         if age > CMC_MARKET_DATA_TTL:  # 使用配置的市场数据TTL，平衡CMC credit消耗与数据新鲜度
             logger.info(f"CMC market data for cmc_id {cmc_id} is stale (age: {age}s), initiating async refresh")
-            service = await get_cmc_service()
+            # 外部请求使用专用Key
+            service = await get_cmc_service(client_type="external")
             asyncio.create_task(service.get_token_market_data(cmc_id))
 
         # 3. 返回混合数据（CMC基础数据 + 实时CCXT价格）
@@ -586,7 +627,8 @@ async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
     except CmcMarketData.DoesNotExist:
         # 4. 数据库没有数据，从CMC获取
         logger.info(f"Market data for cmc_id {cmc_id} not found in database, fetching from CMC")
-        service = await get_cmc_service()
+        # 外部请求使用专用Key
+        service = await get_cmc_service(client_type="external")
         data = await service.get_token_market_data(cmc_id)
 
         if data:
