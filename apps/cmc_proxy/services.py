@@ -27,23 +27,43 @@ class CoinMarketCapClient:
     def __init__(self, timeout=20, client_type="klines"):
         # 根据客户端类型选择不同的API Key
         if client_type == "external":
-            self.api_key = settings.COINMARKETCAP_API_KEY_EXTERNAL
+            self.api_key = getattr(settings, 'COINMARKETCAP_API_KEY_EXTERNAL', None)
             key_name = "COINMARKETCAP_API_KEY_EXTERNAL"
+            # 如果外部Key未配置，降级使用默认Key
+            if not self.api_key:
+                logger.warning("External CMC key not configured, falling back to default key")
+                self.api_key = settings.COINMARKETCAP_API_KEY
+                key_name = "COINMARKETCAP_API_KEY (fallback)"
+                self.client_type = "fallback"
+            else:
+                self.client_type = client_type
         else:
             self.api_key = settings.COINMARKETCAP_API_KEY
             key_name = "COINMARKETCAP_API_KEY"
+            self.client_type = client_type
             
+        # 验证API Key格式
         if not self.api_key:
             logger.error(f"{key_name} is not configured in Django settings.")
             raise ValueError(f"{key_name} is not configured.")
+        
+        if not self._is_valid_api_key(self.api_key):
+            logger.error(f"Invalid {key_name} format")
+            raise ValueError(f"Invalid {key_name} format")
             
         self.headers = {
             'X-CMC_PRO_API_KEY': self.api_key,
             'Accept': 'application/json'
         }
         self.timeout = timeout
-        self.client_type = client_type  # 用于日志标识
         self._http_client = httpx.AsyncClient(timeout=self.timeout)
+        
+    def _is_valid_api_key(self, api_key: str) -> bool:
+        """验证API Key格式（CMC API Key通常是UUID格式）"""
+        if not api_key or len(api_key) < 30:  # CMC API Key通常较长
+            return False
+        # 基本格式检查，避免明显错误的配置
+        return api_key.replace('-', '').replace('_', '').isalnum()
 
     async def _make_api_request(self, endpoint, params):
         logger.info(f"Calling CMC API ({self.client_type}): {endpoint} with params: {params}")
@@ -103,7 +123,7 @@ class SingletonMeta(type):
         return cls._instances[cls]
 
 
-class CoinMarketCapService(metaclass=SingletonMeta):
+class CoinMarketCapService:
     def __init__(self, redis_url=None, client_type="klines"):
         logger.info(f"Initializing CoinMarketCapService with client_type: {client_type}")
         self.redis_url = redis_url or settings.REDIS_CMC_URL
@@ -488,21 +508,19 @@ class CoinMarketCapService(metaclass=SingletonMeta):
         self._initialized = False
 
 
+# 服务实例缓存
+_service_instances = {}
+_service_lock = asyncio.Lock()
+
 async def get_cmc_service(client_type="klines") -> CoinMarketCapService:
-    """获取指定类型的CoinMarketCapService实例"""
-    # 为了避免单例冲突，不同client_type使用不同的key
-    service_key = f"cmc_service_{client_type}"
-    
-    # 由于SingletonMeta的限制，我们需要创建不同的实例
-    if client_type == "external":
-        # 外部请求使用独立的实例，避免与klines实例冲突
-        service = CoinMarketCapService.__new__(CoinMarketCapService)
-        service.__init__(client_type="external")
-        await service.async_init()
-        return service
-    else:
-        # K线任务使用默认的单例模式
-        return await CoinMarketCapService(client_type="klines")
+    """获取指定类型的CoinMarketCapService实例，使用实例缓存避免重复创建"""
+    async with _service_lock:
+        if client_type not in _service_instances:
+            logger.info(f"Creating new CoinMarketCapService instance for {client_type}")
+            service = CoinMarketCapService(client_type=client_type)
+            await service.async_init()
+            _service_instances[client_type] = service
+        return _service_instances[client_type]
 
 
 async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: datetime, end_time: datetime,
