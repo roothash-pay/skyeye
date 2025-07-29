@@ -63,11 +63,21 @@ class Command(BaseCommand):
         interval = options['interval']
         run_once = options['run_once']
         count = options['count']
-        cmc_ids = options.get('cmc_ids')
+        cmc_ids_str = options.get('cmc_ids')
         top_n = options.get('top_n')
         initialize = options['initialize']
         batch_size = options['batch_size']
         delay = options['delay']
+        
+        # 解析cmc_ids字符串为整数列表
+        cmc_ids = None
+        if cmc_ids_str:
+            try:
+                cmc_ids = [int(x.strip()) for x in cmc_ids_str.split(',') if x.strip()]
+                logger.info(f"Parsed CMC IDs: {cmc_ids}")
+            except ValueError as e:
+                self.stdout.write(self.style.ERROR(f"Invalid CMC IDs format: {cmc_ids_str}. Error: {e}"))
+                return
 
         if run_once:
             logger.info("Running CMC klines update task once.")
