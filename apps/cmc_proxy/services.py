@@ -543,7 +543,8 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
         cache_key = f"klines_fetch_lock:{asset.cmc_id}:{timeframe}"
         
         try:
-            service = await get_cmc_service()
+            # 外部用户请求K线数据，使用外部专用Key
+            service = await get_cmc_service(client_type="external")
             
             # 检查是否已有正在进行的API请求（防止重复调用）
             existing_lock = await service.cmc_redis.get(cache_key)
@@ -585,7 +586,7 @@ async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: date
             logger.error(f"Error fetching klines for asset {asset.symbol}: {e}", exc_info=True)
             # 出错时也要清除锁
             try:
-                service = await get_cmc_service()
+                service = await get_cmc_service(client_type="external")
                 await service.cmc_redis.delete(cache_key)
             except:
                 pass
