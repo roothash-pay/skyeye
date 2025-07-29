@@ -114,11 +114,16 @@ class CmcKlineManager(models.Manager):
         try:
             # 转换为Decimal进行精确计算
             if isinstance(value, (int, float)):
-                decimal_value = Decimal(str(value))
+                # 对于浮点数，特别是科学计数法，使用格式化字符串避免精度问题
+                if isinstance(value, float) and (value > 1e15 or value < -1e15):
+                    # 对于大数值，使用固定点表示法避免科学计数法的精度问题
+                    decimal_value = Decimal(f"{value:.0f}")
+                else:
+                    decimal_value = Decimal(str(value))
             elif isinstance(value, str):
                 decimal_value = Decimal(value)
             else:
-                decimal_value = Decimal(value)
+                decimal_value = Decimal(str(value))
             
             # 检查是否为无穷大或NaN
             if not decimal_value.is_finite():
