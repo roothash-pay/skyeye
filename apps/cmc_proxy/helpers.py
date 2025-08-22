@@ -36,10 +36,10 @@ class MarketDataFormatter:
             return None
 
     @staticmethod
-    def format_market_data_item(item) -> Dict[str, Any]:
+    async def format_market_data_item(item) -> Dict[str, Any]:
         """格式化单个市场数据项，使用CCXT价格替换CMC价格"""
         # 尝试获取CCXT价格
-        ccxt_data = MarketDataFormatter.get_ccxt_price_for_cmc_asset(item.asset)
+        ccxt_data = await MarketDataFormatter.get_ccxt_price_for_cmc_asset(item.asset)
         
         # 使用CCXT价格（如果可用），否则回退到CMC价格
         if ccxt_data:
@@ -75,7 +75,7 @@ class MarketDataFormatter:
         }
 
     @staticmethod
-    def get_ccxt_price_for_cmc_asset(cmc_asset) -> Optional[Dict[str, Any]]:
+    async def get_ccxt_price_for_cmc_asset(cmc_asset) -> Optional[Dict[str, Any]]:
         """通过CMC资产获取对应的CCXT价格数据（绕过缓存获取最新数据）"""
         if not cmc_asset:
             return None
@@ -84,13 +84,13 @@ class MarketDataFormatter:
             # 使用Django apps registry获取模型，避免循环导入
             AssetPrice = apps.get_model('price_oracle', 'AssetPrice')
             
-            # 直接查询数据库获取最新价格，绕过任何缓存
-            price_obj = AssetPrice.objects.filter(cmc_asset=cmc_asset).order_by('-updated_at').first()
+            # 直接查询数据库获取最新价格，绕过任何缓存（使用异步查询）
+            price_obj = await AssetPrice.objects.filter(cmc_asset=cmc_asset).order_by('-updated_at').afirst()
             
             if not price_obj:
                 # 如果没有找到关联，尝试通过symbol查找最新价格
                 base_asset = cmc_asset.symbol.lower()
-                price_obj = AssetPrice.objects.filter(base_asset=base_asset).order_by('-updated_at').first()
+                price_obj = await AssetPrice.objects.filter(base_asset=base_asset).order_by('-updated_at').afirst()
             
             if price_obj:
                 # 检查价格数据的新鲜度
@@ -113,14 +113,14 @@ class MarketDataFormatter:
         return None
 
     @staticmethod
-    def format_market_data_from_db(market_data) -> Dict[str, Any]:
+    async def format_market_data_from_db(market_data) -> Dict[str, Any]:
         """
         混合数据源格式化：
         - CMC数据：市值、排名、供应量等（来自缓存的CMC数据，节省credit）
         - 价格数据：实时CCXT价格（无缓存，保证时效性）
         """
         # 获取实时CCXT价格数据
-        ccxt_data = MarketDataFormatter.get_ccxt_price_for_cmc_asset(market_data.asset)
+        ccxt_data = await MarketDataFormatter.get_ccxt_price_for_cmc_asset(market_data.asset)
         
         # 价格相关字段：优先使用CCXT实时数据
         if ccxt_data:
