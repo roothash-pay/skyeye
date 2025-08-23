@@ -177,7 +177,7 @@ class CmcMarketDataView(View):
         results = []
         for item in items:
             kline_data = await get_klines_for_asset(item.asset, **kline_params)
-            result_item = MarketDataFormatter.format_market_data_item(item)
+            result_item = await MarketDataFormatter.format_market_data_item(item)
             result_item.update(kline_data)
             results.append(result_item)
         return ok_json({'results': results})
@@ -200,7 +200,7 @@ class CmcMarketDataView(View):
         results = []
         for item in items:
             kline_data = await get_klines_for_asset(item.asset, **kline_params)
-            result_item = MarketDataFormatter.format_market_data_item(item)
+            result_item = await MarketDataFormatter.format_market_data_item(item)
             result_item.update(kline_data)
             results.append(result_item)
         return ok_json({

@@ -110,11 +110,15 @@ class CoinMarketCapClient:
 
 class SingletonMeta(type):
     _instances: Dict[Any, Any] = {}
-    _init_lock = asyncio.Lock()
+    _init_locks: Dict[Any, asyncio.Lock] = {}
 
     async def __call__(cls, *args, **kwargs):
         if cls not in cls._instances:
-            async with cls._init_lock:
+            # 获取或创建当前事件循环的锁
+            if cls not in cls._init_locks:
+                cls._init_locks[cls] = asyncio.Lock()
+            
+            async with cls._init_locks[cls]:
                 if cls not in cls._instances:  # 再次检查，防止重复创建
                     instance = super(SingletonMeta, cls).__call__(*args, **kwargs)
                     if hasattr(instance, "async_init") and callable(instance.async_init):
@@ -131,7 +135,7 @@ class CoinMarketCapService:
         self._client_type = client_type
         self._cmc_redis = None
         self._initialized = False
-        self._init_lock = asyncio.Lock()
+        self._init_lock = None  # 将在async_init中创建
 
     @property
     def client(self):
@@ -150,6 +154,10 @@ class CoinMarketCapService:
     async def async_init(self):
         """异步初始化方法"""
         if not self._initialized:
+            # 在当前事件循环中创建锁
+            if self._init_lock is None:
+                self._init_lock = asyncio.Lock()
+            
             async with self._init_lock:
                 if not self._initialized:  # 双重检查以防止并发初始化
                     logger.info("Async initializing CoinMarketCapService")
@@ -177,6 +185,8 @@ class CoinMarketCapService:
                 await self._safe_close_redis()
                 self._cmc_redis = None
                 self._initialized = False
+                # 重置锁以使用当前事件循环
+                self._init_lock = None
                 await self.async_init()
 
     async def _safe_close_redis(self):
@@ -508,19 +518,63 @@ class CoinMarketCapService:
         self._initialized = False
 
 
-# 服务实例缓存
+# 服务实例缓存 - 按 (event_loop_id, client_type) 维护
 _service_instances = {}
-_service_lock = asyncio.Lock()
+_service_locks = {}  # 按 (event_loop_id, client_type) 存储锁
+
+def _get_event_loop_id():
+    """获取当前事件循环的唯一标识符"""
+    try:
+        loop = asyncio.get_running_loop()
+        return id(loop)
+    except RuntimeError:
+        # 没有运行中的事件循环
+        return None
 
 async def get_cmc_service(client_type="klines") -> CoinMarketCapService:
     """获取指定类型的CoinMarketCapService实例，使用实例缓存避免重复创建"""
-    async with _service_lock:
-        if client_type not in _service_instances:
-            logger.info(f"Creating new CoinMarketCapService instance for {client_type}")
+    loop_id = _get_event_loop_id()
+    if loop_id is None:
+        raise RuntimeError("No running event loop found")
+    
+    cache_key = (loop_id, client_type)
+    
+    # 获取或创建当前事件循环的锁
+    if cache_key not in _service_locks:
+        _service_locks[cache_key] = asyncio.Lock()
+    
+    async with _service_locks[cache_key]:
+        if cache_key not in _service_instances:
+            logger.info(f"Creating new CoinMarketCapService instance for {client_type} in event loop {loop_id}")
             service = CoinMarketCapService(client_type=client_type)
             await service.async_init()
-            _service_instances[client_type] = service
-        return _service_instances[client_type]
+            _service_instances[cache_key] = service
+        else:
+            service = _service_instances[cache_key]
+            # 检查Redis连接是否有效
+            try:
+                if service._cmc_redis:
+                    await service._cmc_redis.ping()
+            except Exception as e:
+                logger.warning(f"Service instance for {client_type} has invalid connection, recreating: {e}")
+                service = CoinMarketCapService(client_type=client_type)
+                await service.async_init()
+                _service_instances[cache_key] = service
+        
+        return _service_instances[cache_key]
+
+def cleanup_stale_services():
+    """清理不再使用的服务实例（可以在进程结束时调用）"""
+    global _service_instances, _service_locks
+    current_loop_id = _get_event_loop_id()
+    
+    # 清理不同事件循环的实例
+    keys_to_remove = [key for key in _service_instances.keys() if key[0] != current_loop_id]
+    for key in keys_to_remove:
+        logger.info(f"Removing stale service instance for {key}")
+        del _service_instances[key]
+        if key in _service_locks:
+            del _service_locks[key]
 
 
 async def get_klines_for_asset(asset: CmcAsset, timeframe: str, start_time: datetime, end_time: datetime,
@@ -623,7 +677,7 @@ async def get_latest_market_data(cmc_id: int) -> Optional[Dict[str, Any]]:
             asyncio.create_task(service.get_token_market_data(cmc_id))
 
         # 3. 返回混合数据（CMC基础数据 + 实时CCXT价格）
-        return MarketDataFormatter.format_market_data_from_db(market_data)
+        return await MarketDataFormatter.format_market_data_from_db(market_data)
 
     except CmcMarketData.DoesNotExist:
         # 4. 数据库没有数据，从CMC获取
