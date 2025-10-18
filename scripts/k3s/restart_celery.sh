@@ -55,14 +55,8 @@ python3 manage.py initialize_beat_tasks
 log "启动Price队列Worker..."
 celery -A skyeye worker --pool=solo --queues=price --loglevel=INFO --detach --pidfile=/tmp/celery-price.pid --logfile=/tmp/celery-price.log
 
-log "启动Sync队列Worker..."
-celery -A skyeye worker --pool=solo --queues=sync --loglevel=INFO --detach --pidfile=/tmp/celery-sync.pid --logfile=/tmp/celery-sync.log
-
-log "启动Klines队列Worker..."
-celery -A skyeye worker --pool=solo --queues=klines --loglevel=INFO --detach --pidfile=/tmp/celery-klines.pid --logfile=/tmp/celery-klines.log
-
-log "启动Heavy队列Worker..."
-celery -A skyeye worker --pool=solo --queues=heavy,celery --loglevel=INFO --detach --pidfile=/tmp/celery-heavy.pid --logfile=/tmp/celery-heavy.log
+log "启动默认队列Worker..."
+celery -A skyeye worker --pool=solo --queues=celery --loglevel=INFO --detach --pidfile=/tmp/celery-default.pid --logfile=/tmp/celery-default.log
 
 log "启动Beat调度器..."
 celery -A skyeye beat --loglevel=INFO --detach --pidfile=/tmp/celery-beat.pid --logfile=/tmp/celery-beat.log
@@ -92,7 +86,7 @@ fi
 
 # 9. 验证结果
 local_count=$(ps aux | grep 'celery.*skyeye' | grep -v grep | wc -l)
-if [[ $local_count -ge 5 ]]; then
+if [[ $local_count -ge 3 ]]; then
     log "✅ Celery服务重启成功 ($local_count 个进程)"
     
     # 显示使用说明
