@@ -110,6 +110,11 @@ class CCXTAdapter(ExchangeAdapter):
                 if not ticker or 'symbol' not in ticker or not ticker.get('last'):
                     continue
 
+                # 部分交易所会返回不带分隔符的交易对（如 AXSBIDR），这些数据无法解析，直接跳过
+                if '/' not in symbol:
+                    logger.debug(f"{self.exchange_id} 跳过无法识别的交易对: {symbol}")
+                    continue
+
                 # 分割交易对，例如：BTC/USDT -> (BTC, USDT)
                 base, quote = symbol.split('/', 1)
 
