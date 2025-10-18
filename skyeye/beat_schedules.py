@@ -33,22 +33,24 @@ DEFAULT_BEAT_SCHEDULE = {
     #     'options': {'queue': 'klines'},  # K线专用队列
     #     'kwargs': {'count': 24, 'only_missing': True},  # 只处理缺失数据的资产
     # },
-    'daily_token_holdings_update': {
-        'task': 'apps.token_holdings.tasks.update_token_holdings_daily_task',
-        'schedule': crontab(hour=4, minute=0),  # 每天凌晨4点执行
-        'options': {'queue': 'heavy'},  # 重任务队列
-        'kwargs': {'max_concurrent': 5},  # 限制并发数避免API限频
-    },
-    'daily_token_unlocks_update': {
-        'task': 'apps.token_unlocks.tasks.update_token_unlocks_task',
-        'schedule': crontab(hour=5, minute=0),  # 每天凌晨5点执行
-        'options': {'queue': 'heavy'},  # 重任务队列
-    },
-    'daily_token_allocations_update': {
-        'task': 'apps.token_economics.tasks.update_token_allocations_task',
-        'schedule': crontab(hour=6, minute=0),  # 每天凌晨6点分执行
-        'options': {'queue': 'heavy'},  # 重任务队列
-    },
+
+    # Token分析任务已禁用 - 不再需要这些辅助数据
+    # 'daily_token_holdings_update': {
+    #     'task': 'apps.token_holdings.tasks.update_token_holdings_daily_task',
+    #     'schedule': crontab(hour=4, minute=0),  # 每天凌晨4点执行
+    #     'options': {'queue': 'heavy'},  # 重任务队列
+    #     'kwargs': {'max_concurrent': 5},  # 限制并发数避免API限频
+    # },
+    # 'daily_token_unlocks_update': {
+    #     'task': 'apps.token_unlocks.tasks.update_token_unlocks_task',
+    #     'schedule': crontab(hour=5, minute=0),  # 每天凌晨5点执行
+    #     'options': {'queue': 'heavy'},  # 重任务队列
+    # },
+    # 'daily_token_allocations_update': {
+    #     'task': 'apps.token_economics.tasks.update_token_allocations_task',
+    #     'schedule': crontab(hour=6, minute=0),  # 每天凌晨6点分执行
+    #     'options': {'queue': 'heavy'},  # 重任务队列
+    # },
     'collect_prices_frequently': {
         'task': 'apps.price_oracle.tasks.collect_prices_task',
         'schedule': 30.0,  # 每30秒采集一次价格数据

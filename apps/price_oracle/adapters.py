@@ -194,24 +194,25 @@ class AdapterFactory:
     def get_adapter(cls, exchange: str) -> Optional[ExchangeAdapter]:
         """获取交易所适配器"""
         exchange_lower = exchange.lower()
-        
-        # 特殊处理CoinUp - 改用CMC数据源
-        if exchange_lower == 'coinup':
-            try:
-                # 临时方案：使用CMC的CP数据替代CoinUp
-                from apps.price_oracle.cmc_cp_adapter import CmcCpAdapter
-                logger.info("使用CMC数据源获取CP价格（避免Cloudflare限制）")
-                return CmcCpAdapter()
-            except Exception as e:
-                logger.error(f"创建CMC CP适配器失败: {e}")
-                # 备用方案：尝试原始的CoinUp适配器
-                try:
-                    from apps.price_oracle.coinup_adapter import CoinUpAdapter
-                    logger.warning("回退到CoinUp适配器（可能被Cloudflare阻止）")
-                    return CoinUpAdapter()
-                except Exception as fallback_error:
-                    logger.error(f"所有CP价格适配器都失败: {fallback_error}")
-                    return None
+
+        # 特殊处理CoinUp - 已禁用（CoinUp被Cloudflare阻止，CMC数据源也已停用）
+        # 保留代码以备将来恢复使用
+        # if exchange_lower == 'coinup':
+        #     try:
+        #         # 临时方案：使用CMC的CP数据替代CoinUp
+        #         from apps.price_oracle.cmc_cp_adapter import CmcCpAdapter
+        #         logger.info("使用CMC数据源获取CP价格（避免Cloudflare限制）")
+        #         return CmcCpAdapter()
+        #     except Exception as e:
+        #         logger.error(f"创建CMC CP适配器失败: {e}")
+        #         # 备用方案：尝试原始的CoinUp适配器
+        #         try:
+        #             from apps.price_oracle.coinup_adapter import CoinUpAdapter
+        #             logger.warning("回退到CoinUp适配器（可能被Cloudflare阻止）")
+        #             return CoinUpAdapter()
+        #         except Exception as fallback_error:
+        #             logger.error(f"所有CP价格适配器都失败: {fallback_error}")
+        #             return None
         
         adapter_factory = cls.ADAPTERS.get(exchange_lower)
         if adapter_factory:
