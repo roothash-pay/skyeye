@@ -104,18 +104,24 @@ check_critical_tasks() {
 check_data_freshness() {
     if [[ -f "/tmp/beat_health.json" ]]; then
         # 检查各类数据的新鲜度
-        local stale_count=$(jq -r '.data_freshness | to_entries[] | select(.value.status == "stale") | .key' /tmp/beat_health.json 2>/dev/null | wc -l)
-        local no_data_count=$(jq -r '.data_freshness | to_entries[] | select(.value.status == "no_data") | .key' /tmp/beat_health.json 2>/dev/null | wc -l)
+        local stale_optional_count=$(jq '[.data_freshness | to_entries[] | select((.key == "cmc_market_data" or .key == "kline_data") and .value.status == "stale")] | length' /tmp/beat_health.json 2>/dev/null || echo 0)
+        local stale_non_optional_count=$(jq '[.data_freshness | to_entries[] | select((.key != "cmc_market_data" and .key != "kline_data") and .value.status == "stale")] | length' /tmp/beat_health.json 2>/dev/null || echo 0)
+        local stale_optional_names=$(jq -r '.data_freshness | to_entries[] | select((.key == "cmc_market_data" or .key == "kline_data") and .value.status == "stale") | .key' /tmp/beat_health.json 2>/dev/null | tr '\n' ' ')
+        local stale_non_optional_names=$(jq -r '.data_freshness | to_entries[] | select((.key != "cmc_market_data" and .key != "kline_data") and .value.status == "stale") | .key' /tmp/beat_health.json 2>/dev/null | tr '\n' ' ')
+        local no_data_count=$(jq '[.data_freshness | to_entries[] | select(.value.status == "no_data")] | length' /tmp/beat_health.json 2>/dev/null || echo 0)
         
-        if [[ $stale_count -eq 0 && $no_data_count -eq 0 ]]; then
+        if [[ $stale_optional_count -eq 0 && $stale_non_optional_count -eq 0 && $no_data_count -eq 0 ]]; then
             log "✅ 所有数据源都是新鲜的"
             return 0
         elif [[ $no_data_count -gt 0 ]]; then
             error "❌ 发现无数据的数据源，任务可能从未执行成功"
             return 1
-        else
-            warn "⚠️  发现 $stale_count 个数据源过期，任务可能执行缓慢或失败"
+        elif [[ $stale_non_optional_count -gt 0 ]]; then
+            error "❌ 核心数据源过期: $stale_non_optional_names"
             return 1
+        else
+            warn "⚠️  可选数据源过期: $stale_optional_names"
+            return 0
         fi
     else
         warn "无法获取数据新鲜度信息"
@@ -159,8 +165,20 @@ check_api_health() {
                 log "✅ Beat API健康检查通过"
                 return 0
             elif [[ "$api_status" == "warning" ]]; then
-                warn "⚠️  Beat API状态警告，可能有数据延迟: $stale_data"
-                return 1
+                local critical_stale=""
+                for source in $stale_data; do
+                    if [[ -n "$source" && "$source" != "cmc_market_data" && "$source" != "kline_data" ]]; then
+                        critical_stale+="$source "
+                    fi
+                done
+                
+                if [[ -n "$critical_stale" ]]; then
+                    warn "⚠️  Beat API状态警告，关键数据延迟: $critical_stale"
+                    return 1
+                else
+                    warn "⚠️  Beat API状态警告（可选数据延迟）: $stale_data"
+                    return 0
+                fi
             else
                 error "Beat API状态异常: $api_status"
                 return 1

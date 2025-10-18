@@ -12,6 +12,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+OPTIONAL_DATA_SOURCES = {'cmc_market_data', 'kline_data'}
+
 def _check_data_freshness():
     """
     检查关键数据的新鲜度
@@ -23,21 +25,29 @@ def _check_data_freshness():
         from django.utils import timezone
         now = timezone.now()
         
-        # 检查CMC市场数据新鲜度
-        try:
-            from apps.cmc_proxy.models import CmcMarketData
-            latest_market_data = CmcMarketData.objects.order_by('-updated_at').first()
-            if latest_market_data:
-                age_seconds = (now - latest_market_data.updated_at).total_seconds()
-                freshness_status['cmc_market_data'] = {
-                    'last_update': latest_market_data.updated_at.isoformat(),
-                    'age_seconds': int(age_seconds),
-                    'status': 'fresh' if age_seconds < 600 else 'stale'  # 10分钟阈值
-                }
-            else:
-                freshness_status['cmc_market_data'] = {'status': 'no_data'}
-        except Exception as e:
-            freshness_status['cmc_market_data'] = {'status': 'error', 'error': str(e)}
+        cmc_features_enabled = getattr(settings, 'CMC_FEATURES_ENABLED', False)
+        
+        if cmc_features_enabled:
+            # 检查CMC市场数据新鲜度
+            try:
+                from apps.cmc_proxy.models import CmcMarketData
+                latest_market_data = CmcMarketData.objects.order_by('-updated_at').first()
+                if latest_market_data:
+                    age_seconds = (now - latest_market_data.updated_at).total_seconds()
+                    freshness_status['cmc_market_data'] = {
+                        'last_update': latest_market_data.updated_at.isoformat(),
+                        'age_seconds': int(age_seconds),
+                        'status': 'fresh' if age_seconds < 600 else 'stale'  # 10分钟阈值
+                    }
+                else:
+                    freshness_status['cmc_market_data'] = {'status': 'no_data'}
+            except Exception as e:
+                freshness_status['cmc_market_data'] = {'status': 'error', 'error': str(e)}
+        else:
+            freshness_status['cmc_market_data'] = {
+                'status': 'disabled',
+                'message': 'CMC 市场数据采集已暂停'
+            }
         
         # 检查价格 Oracle 数据新鲜度
         try:
@@ -55,21 +65,27 @@ def _check_data_freshness():
         except Exception as e:
             freshness_status['price_oracle'] = {'status': 'error', 'error': str(e)}
         
-        # 检查K线数据新鲜度
-        try:
-            from apps.cmc_proxy.models import CmcKline
-            latest_kline = CmcKline.objects.filter(timeframe='1h').order_by('-timestamp').first()
-            if latest_kline:
-                age_seconds = (now - latest_kline.timestamp).total_seconds()
-                freshness_status['kline_data'] = {
-                    'last_update': latest_kline.timestamp.isoformat(),
-                    'age_seconds': int(age_seconds),
-                    'status': 'fresh' if age_seconds < 7200 else 'stale'  # 2小时阈值
-                }
-            else:
-                freshness_status['kline_data'] = {'status': 'no_data'}
-        except Exception as e:
-            freshness_status['kline_data'] = {'status': 'error', 'error': str(e)}
+        if cmc_features_enabled:
+            # 检查K线数据新鲜度
+            try:
+                from apps.cmc_proxy.models import CmcKline
+                latest_kline = CmcKline.objects.filter(timeframe='1h').order_by('-timestamp').first()
+                if latest_kline:
+                    age_seconds = (now - latest_kline.timestamp).total_seconds()
+                    freshness_status['kline_data'] = {
+                        'last_update': latest_kline.timestamp.isoformat(),
+                        'age_seconds': int(age_seconds),
+                        'status': 'fresh' if age_seconds < 7200 else 'stale'  # 2小时阈值
+                    }
+                else:
+                    freshness_status['kline_data'] = {'status': 'no_data'}
+            except Exception as e:
+                freshness_status['kline_data'] = {'status': 'error', 'error': str(e)}
+        else:
+            freshness_status['kline_data'] = {
+                'status': 'disabled',
+                'message': 'CMC K线采集已暂停'
+            }
             
     except Exception as e:
         freshness_status['error'] = str(e)
@@ -209,6 +225,15 @@ def _is_valid_cmc_key(api_key: str) -> bool:
 
 def _check_cmc_keys_health():
     """检查CMC API Keys的配置状态"""
+    cmc_features_enabled = getattr(settings, 'CMC_FEATURES_ENABLED', False)
+    
+    if not cmc_features_enabled:
+        return {
+            'status': 'disabled',
+            'message': 'CMC 相关功能已暂停',
+            'warning': False
+        }
+    
     cmc_keys_status = {}
     
     try:
@@ -346,9 +371,14 @@ def beat_health(request):
         }
         
         # 根据数据新鲜度和CMC Keys状态调整整体状态
+        optional_sources = OPTIONAL_DATA_SOURCES
         if overall_status == 'healthy':
-            stale_data_count = sum(1 for status in data_freshness.values() 
-                                 if isinstance(status, dict) and status.get('status') == 'stale')
+            stale_data_count = sum(
+                1 for name, status in data_freshness.items()
+                if name not in optional_sources
+                and isinstance(status, dict)
+                and status.get('status') == 'stale'
+            )
             
             # 检查CMC Keys是否有警告
             cmc_keys_warning = cmc_keys_status.get('warning', False)
@@ -357,7 +387,7 @@ def beat_health(request):
                 overall_status = 'warning'
         
         response_data['status'] = overall_status
-        status_code = 200 if overall_status == 'healthy' else 503
+        status_code = 200 if overall_status in ['healthy', 'warning'] else 503
         return JsonResponse(response_data, status=status_code)
         
     except Exception as e:
