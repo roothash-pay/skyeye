@@ -279,28 +279,18 @@ def beat_health(request):
         ).count()
         
         # 检查关键任务状态
-        # CMC相关任务已禁用（API token过期），仅保留价格采集和Token分析任务
+        # 只监控核心的价格采集任务，Token分析任务失败不应导致系统判定为unhealthy
         critical_tasks = [
             # 高频价格任务（最关键）
             'collect_prices_frequently',
             'persist_prices_frequently',
-
-            # Token分析任务（每日更新）
-            'daily_token_holdings_update',
-            'daily_token_unlocks_update',
-            'daily_token_allocations_update'
         ]
         
         # 不同任务的健康检查阈值（秒）
         task_thresholds = {
-            # 高频任务
+            # 高频价格任务（核心功能）
             'collect_prices_frequently': 300,          # 30秒执行，5分钟内必须有
             'persist_prices_frequently': 300,          # 15秒执行，5分钟内必须有
-
-            # 每日Token分析任务
-            'daily_token_holdings_update': 86400 * 2,      # 每天凌晨4点，2天内必须有
-            'daily_token_unlocks_update': 86400 * 2,       # 每天凌晨5点，2天内必须有
-            'daily_token_allocations_update': 86400 * 2,   # 每天凌晨6点，2天内必须有
         }
         
         critical_status = {}
